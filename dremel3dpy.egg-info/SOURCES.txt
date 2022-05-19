@@ -1,0 +1,8 @@
+setup.py
+dremel3dpy/__init__.py
+dremel3dpy/const.py
+dremel3dpy.egg-info/PKG-INFO
+dremel3dpy.egg-info/SOURCES.txt
+dremel3dpy.egg-info/dependency_links.txt
+dremel3dpy.egg-info/requires.txt
+dremel3dpy.egg-info/top_level.txt
