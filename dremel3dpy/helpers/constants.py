@@ -1,5 +1,39 @@
 """Constants for the Dremel 3D Printer (3D20, 3D40, 3D45) integration."""
 
+MAJOR_VERSION = 0
+MINOR_VERSION = 0
+PATCH_VERSION = "2"
+
+__version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
+
+PROJECT_NAME = "dremel3dpy"
+PROJECT_PACKAGE_NAME = "dremel3dpy"
+PROJECT_AUTHOR = "Gustavo Stor"
+PROJECT_EMAIL = "gus@storhub.io"
+PROJECT_COPYRIGHT = " 2022, {}".format(PROJECT_AUTHOR)
+PROJECT_LICENSE = "MIT"
+PROJECT_URL = "https://github.com/godely/dremel3dpy"
+PROJECT_DESCRIPTION = "A Dremel 3D Printer Python Library running on Python 3"
+PROJECT_LONG_DESCRIPTION = (
+    "API for grabbing 3D Printer statistics "
+    "and remote controlling a 3D20, 3D40 or "
+    "3D45 model for operations such as resuming "
+    "a print, pausing, canceling or starting a "
+    "new print from either a file path or a URL."
+)
+PROJECT_CLASSIFIERS = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Home Automation",
+]
+PROJECT_GITHUB_USERNAME = "godely"
+PROJECT_GITHUB_REPOSITORY = "dremel3dpy"
+PROJECT_KEYWORDS = ["python", "dremel", "3d", "printer", "3d-printer"]
+
+PYPI_URL = "https://pypi.python.org/pypi/{}".format(PROJECT_PACKAGE_NAME)
+
 SERVICE_PRINT_JOB = "print_job"
 SERVICE_PAUSE_JOB = "pause_job"
 SERVICE_RESUME_JOB = "resume_job"
