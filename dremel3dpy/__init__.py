@@ -228,6 +228,9 @@ class Dremel3DPrinter:
     def is_running(self) -> bool:
         self.is_printing() and not self.is_paused() and not self.is_pausing()
 
+    def is_door_open(self) -> bool:
+        self.get_job_status().get(DOOR_OPEN[1]) == 1
+
     def get_stream_url(self) -> str:
         return f"http://{self._host}:{CAMERA_PORT}/?action=stream"
 

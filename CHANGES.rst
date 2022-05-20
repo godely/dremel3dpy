@@ -3,6 +3,10 @@ Changelog
 
 A list of changes between each release.
 
+0.3.1 (2022-05-20)
+^^^^^^^^^^^^^^^^^^
+- Added is_door_open method to the API
+
 0.3.0 (2022-05-20)
 ^^^^^^^^^^^^^^^^^^
 - Added several new methods to the API
