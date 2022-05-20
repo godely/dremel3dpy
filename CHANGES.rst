@@ -3,6 +3,14 @@ Changelog
 
 A list of changes between each release.
 
+0.3.0 (2022-05-20)
+^^^^^^^^^^^^^^^^^^
+- Added several new methods to the API
+
+0.2.0 (2022-05-19)
+^^^^^^^^^^^^^^^^^^
+- Added several new methods to the API
+
 0.1.0 (2022-05-19)
 ^^^^^^^^^^^^^^^^^^
 - Added several new methods to the API
