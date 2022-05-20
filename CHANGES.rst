@@ -3,6 +3,10 @@ Changelog
 
 A list of changes between each release.
 
+0.3.4 (2022-05-20)
+^^^^^^^^^^^^^^^^^^
+- Added requirements.txt back
+
 0.3.3 (2022-05-20)
 ^^^^^^^^^^^^^^^^^^
 - Added return statement to boolean methods and fixed firmware version return
