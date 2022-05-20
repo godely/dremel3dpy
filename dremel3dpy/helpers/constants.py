@@ -1,8 +1,8 @@
 """Constants for the Dremel 3D Printer (3D20, 3D40, 3D45) integration."""
 
 MAJOR_VERSION = 0
-MINOR_VERSION = 1
-PATCH_VERSION = "1"
+MINOR_VERSION = 3
+PATCH_VERSION = "0"
 
 __version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
 

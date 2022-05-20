@@ -208,13 +208,25 @@ class Dremel3DPrinter:
         return DREMEL_MANUFACTURER
 
     def get_model(self) -> str:
-        return self.printer_info().get(CONF_MODEL)
+        return self.get_printer_info().get(CONF_MODEL)
 
     def get_title(self) -> str:
-        return self.printer_info().get(CONF_TITLE)
+        return self.get_printer_info().get(CONF_TITLE)
 
     def get_firmware_version(self) -> str:
-        return self.printer_info().get(CONF_TITLE)
+        return self.get_printer_info().get(CONF_TITLE)
+
+    def is_printing(self) -> bool:
+        self.get_printing_status() != "ready" and self.get_printing_status() != "completed"
+
+    def is_paused(self) -> bool:
+        self.get_printing_status() == "paused"
+
+    def is_pausing(self) -> bool:
+        self.get_printing_status() == "pausing"
+
+    def is_running(self) -> bool:
+        self.is_printing() and not self.is_paused() and not self.is_pausing()
 
     def get_stream_url(self) -> str:
         return f"http://{self._host}:{CAMERA_PORT}/?action=stream"
@@ -223,10 +235,10 @@ class Dremel3DPrinter:
         return (f"http://{self._host}:{CAMERA_PORT}/?action=snapshot",)
 
     def get_serial_number(self) -> str:
-        return self.printer_info().get(CONF_SERIAL_NUMBER)
+        return self.get_printer_info().get(CONF_SERIAL_NUMBER)
 
     def get_printing_status(self) -> str:
-        job_status = self._job_status.get(JOB_STATUS[1])
+        job_status = self.get_job_status().get(JOB_STATUS[1])
         mapped_status = {
             "": "ready",
             "abort": "ready",
@@ -240,7 +252,7 @@ class Dremel3DPrinter:
         return mapped_status[job_status] if job_status in mapped_status else "unknown"
 
     def get_printing_attributes(self) -> dict[str, Any]:
-        job_status_attrs = self._job_status
+        job_status_attrs = self.get_job_status()
         return {
             key: job_status_attrs[key]
             for key in job_status_attrs.keys()
@@ -257,10 +269,10 @@ class Dremel3DPrinter:
         }
 
     def get_printing_progress(self) -> float:
-        return self._job_status.get(PROGRESS[1])
+        return self.get_job_status().get(PROGRESS[1])
 
     def get_temperature_type(self, temp_type: str) -> int:
-        return self._job_status.get(f"{temp_type}_temperature")
+        return self.get_job_status().get(f"{temp_type}_temperature")
 
     def get_temperature_attributes(self, temp_type: str) -> dict[str, int]:
         return {
