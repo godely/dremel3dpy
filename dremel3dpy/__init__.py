@@ -26,7 +26,7 @@ import validators
 from urllib3.exceptions import InsecureRequestWarning
 from yarl import URL
 
-from .helpers.constants import (
+from dremel3dpy.helpers.constants import (
     AVAILABLE_STORAGE,
     CAMERA_PORT,
     CANCEL_COMMAND,
