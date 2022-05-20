@@ -1,8 +1,8 @@
 """Constants for the Dremel 3D Printer (3D20, 3D40, 3D45) integration."""
 
 MAJOR_VERSION = 0
-MINOR_VERSION = 0
-PATCH_VERSION = "2"
+MINOR_VERSION = 1
+PATCH_VERSION = "0"
 
 __version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
 
@@ -67,9 +67,12 @@ EVENT_DATA_NEW_PRINT_STATS = "dremel_3d_printer_new_print_stats"
 
 REQUEST_TIMEOUT = 30
 
+DREMEL_MANUFACTURER = "Dremel"
+
 MESSAGE = "message"
 ERROR_CODE = "error_code"
 
+CONF_HOST = "host"
 CONF_TITLE = "title"
 CONF_MODEL = "model"
 CONF_SERIAL_NUMBER = "SN"

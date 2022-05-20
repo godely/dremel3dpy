@@ -28,6 +28,7 @@ from yarl import URL
 
 from .helpers.constants import (
     AVAILABLE_STORAGE,
+    CAMERA_PORT,
     CANCEL_COMMAND,
     CHAMBER_TEMPERATURE,
     COMMAND_PATH,
@@ -37,6 +38,7 @@ from .helpers.constants import (
     CONF_ETHERNET_CONNECTED,
     CONF_ETHERNET_IP,
     CONF_FIRMWARE_VERSION,
+    CONF_HOST,
     CONF_MACHINE_TYPE,
     CONF_MODEL,
     CONF_SERIAL_NUMBER,
@@ -44,6 +46,7 @@ from .helpers.constants import (
     CONF_WIFI_CONNECTED,
     CONF_WIFI_IP,
     DOOR_OPEN,
+    DREMEL_MANUFACTURER,
     ELAPSED_TIME,
     ERROR_CODE,
     ESTIMATED_TOTAL_TIME,
@@ -88,107 +91,184 @@ class Dremel3DPrinter:
         """Init a Dremel 3D Printer instance"""
         self._host = host
         self._printer_info = None
-        self._printer_status = None
+        self._job_status = None
         self._printer_extra_stats = None
         self.refresh()
 
-    def get_printer_info(self, refresh=False):
+    def set_printer_info(self, refresh=False):
         """Return attributes related to the printer."""
         if refresh or self._printer_info is None:
-            if self._printer_info is None:
-                self._printer_info = {}
-            printer_info = default_request(self._host, PRINTER_INFO_COMMAND)
-            title = re.search(r"DREMEL [^\s+]+", printer_info[CONF_MACHINE_TYPE]).group(
-                0
-            )
-            model = re.search(
-                r"DREMEL ([^\s+]+)", printer_info[CONF_MACHINE_TYPE]
-            ).group(1)
-            self._printer_info = {
-                CONF_API_VERSION: printer_info[CONF_API_VERSION],
-                CONF_CONNECTION_TYPE: "eth0"
-                if printer_info[CONF_ETHERNET_CONNECTED] == 1
-                else "wlan",
-                CONF_ETHERNET_IP: printer_info[CONF_ETHERNET_IP]
-                if printer_info[CONF_ETHERNET_CONNECTED] == 1
-                else "n-a",
-                CONF_FIRMWARE_VERSION: printer_info[CONF_FIRMWARE_VERSION],
-                CONF_MACHINE_TYPE: printer_info[CONF_MACHINE_TYPE],
-                CONF_MODEL: model,
-                CONF_SERIAL_NUMBER: printer_info[CONF_SERIAL_NUMBER],
-                CONF_TITLE: title,
-                CONF_WIFI_IP: printer_info[CONF_WIFI_IP]
-                if printer_info[CONF_WIFI_CONNECTED] == 1
-                else "n-a",
-            }
+            try:
+                printer_info = default_request(self._host, PRINTER_INFO_COMMAND)
+            except RuntimeError as exc:
+                _LOGGER.exception(str(exc))
+                self._printer_info = None
+            else:
+                title = re.search(
+                    r"DREMEL [^\s+]+", printer_info[CONF_MACHINE_TYPE]
+                ).group(0)
+                model = re.search(
+                    r"DREMEL ([^\s+]+)", printer_info[CONF_MACHINE_TYPE]
+                ).group(1)
+                self._printer_info = {
+                    CONF_HOST: self._host,
+                    CONF_API_VERSION: printer_info[CONF_API_VERSION],
+                    CONF_CONNECTION_TYPE: "eth0"
+                    if printer_info[CONF_ETHERNET_CONNECTED] == 1
+                    else "wlan",
+                    CONF_ETHERNET_IP: printer_info[CONF_ETHERNET_IP]
+                    if printer_info[CONF_ETHERNET_CONNECTED] == 1
+                    else "n-a",
+                    CONF_FIRMWARE_VERSION: printer_info[CONF_FIRMWARE_VERSION],
+                    CONF_MACHINE_TYPE: printer_info[CONF_MACHINE_TYPE],
+                    CONF_MODEL: model,
+                    CONF_SERIAL_NUMBER: printer_info[CONF_SERIAL_NUMBER],
+                    CONF_TITLE: title,
+                    CONF_WIFI_IP: printer_info[CONF_WIFI_IP]
+                    if printer_info[CONF_WIFI_CONNECTED] == 1
+                    else "n-a",
+                }
 
-    def get_printer_status(self, refresh=False):
+    def set_job_status(self, refresh=False):
         """Return stats related to the printer and the printing job."""
-        if refresh or self._printer_status is None:
-            if self._printer_status is None:
-                self._printer_status = {}
-            printer_status = default_request(self._host, PRINTER_STATUS_COMMAND)
-            self._printer_status = {
-                DOOR_OPEN[1]: printer_status[DOOR_OPEN[0]],
-                CHAMBER_TEMPERATURE[1]: printer_status[CHAMBER_TEMPERATURE[0]],
-                ELAPSED_TIME[1]: printer_status[ELAPSED_TIME[0]],
-                ESTIMATED_TOTAL_TIME[1]: printer_status[ESTIMATED_TOTAL_TIME[0]],
-                EXTRUDER_TEMPERATURE[1]: printer_status[EXTRUDER_TEMPERATURE[0]],
-                EXTRUDER_TARGET_TEMPERATURE[1]: printer_status[
-                    EXTRUDER_TARGET_TEMPERATURE[0]
-                ],
-                FAN_SPEED[1]: printer_status[FAN_SPEED[0]],
-                FILAMENT[1]: printer_status[FILAMENT[0]],
-                JOB_STATUS[1]: printer_status[JOB_STATUS[0]],
-                JOB_NAME[1]: printer_status[JOB_NAME[0]],
-                NETWORK_BUILD[1]: printer_status[NETWORK_BUILD[0]],
-                PLATFORM_TARGET_TEMPERATURE[1]: printer_status[
-                    PLATFORM_TARGET_TEMPERATURE[0]
-                ],
-                PLATFORM_TEMPERATURE[1]: printer_status[PLATFORM_TEMPERATURE[0]],
-                PROGRESS[1]: printer_status[PROGRESS[0]],
-                REMAINING_TIME[1]: printer_status[REMAINING_TIME[0]],
-                STATUS[1]: printer_status[STATUS[0]],
-            }
+        if refresh or self._job_status is None:
+            try:
+                job_status = default_request(self._host, PRINTER_STATUS_COMMAND)
+            except RuntimeError as exc:
+                _LOGGER.exception(str(exc))
+                self._job_status = None
+            else:
+                self._job_status = {
+                    DOOR_OPEN[1]: job_status[DOOR_OPEN[0]],
+                    CHAMBER_TEMPERATURE[1]: job_status[CHAMBER_TEMPERATURE[0]],
+                    ELAPSED_TIME[1]: job_status[ELAPSED_TIME[0]],
+                    ESTIMATED_TOTAL_TIME[1]: job_status[ESTIMATED_TOTAL_TIME[0]],
+                    EXTRUDER_TEMPERATURE[1]: job_status[EXTRUDER_TEMPERATURE[0]],
+                    EXTRUDER_TARGET_TEMPERATURE[1]: job_status[
+                        EXTRUDER_TARGET_TEMPERATURE[0]
+                    ],
+                    FAN_SPEED[1]: job_status[FAN_SPEED[0]],
+                    FILAMENT[1]: job_status[FILAMENT[0]],
+                    JOB_STATUS[1]: job_status[JOB_STATUS[0]],
+                    JOB_NAME[1]: job_status[JOB_NAME[0]],
+                    NETWORK_BUILD[1]: job_status[NETWORK_BUILD[0]],
+                    PLATFORM_TARGET_TEMPERATURE[1]: job_status[
+                        PLATFORM_TARGET_TEMPERATURE[0]
+                    ],
+                    PLATFORM_TEMPERATURE[1]: job_status[PLATFORM_TEMPERATURE[0]],
+                    PROGRESS[1]: job_status[PROGRESS[0]],
+                    REMAINING_TIME[1]: job_status[REMAINING_TIME[0]],
+                    STATUS[1]: job_status[STATUS[0]],
+                }
 
-    def get_extra_status(self, refresh=False):
+    def set_extra_status(self, refresh=False):
         """Return extra status that we grab from the Dremel webpage API."""
         if refresh or self._printer_extra_stats is None:
-            if self._printer_extra_stats is None:
-                self._printer_extra_stats = {}
-            extra_status = default_request(
-                self._host,
-                scheme="https",
-                port=EXTRA_STATUS_PORT,
-                path=HOME_MESSAGE_PATH,
-            )
-            max_platform_temperature = re.search(
-                r"0-(\d+)", extra_status[PLATFORM_TEMPERATURE_RANGE[0]]
-            ).group(1)
-            max_extruder_temperature = re.search(
-                r"0-(\d+)", extra_status[EXTRUDER_TEMPERATURE_RANGE[0]]
-            ).group(1)
-            self._printer_extra_stats = {
-                AVAILABLE_STORAGE[1]: extra_status[AVAILABLE_STORAGE[0]],
-                EXTRUDER_TEMPERATURE_RANGE[1]: max_extruder_temperature,
-                PLATFORM_TEMPERATURE_RANGE[1]: max_platform_temperature,
-                USAGE_COUNTER[1]: extra_status[USAGE_COUNTER[0]],
-            }
-
-    def printer_info(self) -> dict[str, Any]:
-        return self._printer_info
-
-    def printer_status(self) -> dict[str, Any]:
-        return self._printer_status | self._printer_extra_stats
+            try:
+                extra_status = default_request(
+                    self._host,
+                    scheme="https",
+                    port=EXTRA_STATUS_PORT,
+                    path=HOME_MESSAGE_PATH,
+                )
+                print(extra_status)
+            except RuntimeError as exc:
+                _LOGGER.exception(str(exc))
+                self._printer_extra_stats = None
+            else:
+                max_platform_temperature = re.search(
+                    r"0-(\d+)", extra_status[PLATFORM_TEMPERATURE_RANGE[0]]
+                ).group(1)
+                max_extruder_temperature = re.search(
+                    r"0-(\d+)", extra_status[EXTRUDER_TEMPERATURE_RANGE[0]]
+                ).group(1)
+                self._printer_extra_stats = {
+                    AVAILABLE_STORAGE[1]: extra_status[AVAILABLE_STORAGE[0]],
+                    EXTRUDER_TEMPERATURE_RANGE[1]: max_extruder_temperature,
+                    PLATFORM_TEMPERATURE_RANGE[1]: max_platform_temperature,
+                    USAGE_COUNTER[1]: extra_status[USAGE_COUNTER[0]],
+                }
 
     def refresh(self) -> None:
         """Do a full refresh of all API calls."""
         try:
-            self.get_printer_info(refresh=True)
-            self.get_printer_status(refresh=True)
-            self.get_extra_status(refresh=True)
+            self.set_printer_info(refresh=True)
+            self.set_job_status(refresh=True)
+            self.set_extra_status(refresh=True)
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
+
+    def get_printer_info(self) -> dict[str, Any]:
+        return self._printer_info
+
+    def get_job_status(self) -> dict[str, Any]:
+        return (self._job_status or {}) | (self._printer_extra_stats or {})
+
+    def get_manufacturer(self) -> str:
+        return DREMEL_MANUFACTURER
+
+    def get_model(self) -> str:
+        return self.printer_info().get(CONF_MODEL)
+
+    def get_title(self) -> str:
+        return self.printer_info().get(CONF_TITLE)
+
+    def get_firmware_version(self) -> str:
+        return self.printer_info().get(CONF_TITLE)
+
+    def get_stream_url(self) -> str:
+        return f"http://{self._host}:{CAMERA_PORT}/?action=stream"
+
+    def get_snapshot_url(self) -> str:
+        return (f"http://{self._host}:{CAMERA_PORT}/?action=snapshot",)
+
+    def get_serial_number(self) -> str:
+        return self.printer_info().get(CONF_SERIAL_NUMBER)
+
+    def get_printing_status(self) -> str:
+        job_status = self._job_status.get(JOB_STATUS[1])
+        mapped_status = {
+            "": "ready",
+            "abort": "ready",
+            "building": "building",
+            "completed": "completed",
+            "pausing": "pausing",
+            "preparing": "preparing",
+            "!pausing": "paused",
+            "!resuming": "resuming",
+        }
+        return mapped_status[job_status] if job_status in mapped_status else "unknown"
+
+    def get_printing_attributes(self) -> dict[str, Any]:
+        job_status_attrs = self._job_status
+        return {
+            key: job_status_attrs[key]
+            for key in job_status_attrs.keys()
+            & {
+                ELAPSED_TIME[1],
+                ESTIMATED_TOTAL_TIME[1],
+                FAN_SPEED[1],
+                FILAMENT[1],
+                JOB_NAME[1],
+                JOB_STATUS[1],
+                NETWORK_BUILD[1],
+                REMAINING_TIME[1],
+            }
+        }
+
+    def get_printing_progress(self) -> float:
+        return self._job_status.get(PROGRESS[1])
+
+    def get_temperature_type(self, temp_type: str) -> int:
+        return self._job_status.get(f"{temp_type}_temperature")
+
+    def get_temperature_attributes(self, temp_type: str) -> dict[str, int]:
+        return {
+            "target_temp": self._job_status.get(f"{temp_type}_target_temperature"),
+            "max_temp": int(
+                self._printer_extra_stats.get(f"{temp_type}_max_temperature")
+            ),
+        }
 
     def _upload_print(self: str, file: str) -> tuple[str, dict[str, str]]:
         try:
