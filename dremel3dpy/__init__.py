@@ -101,8 +101,8 @@ class Dremel3DPrinter:
             try:
                 printer_info = default_request(self._host, PRINTER_INFO_COMMAND)
             except RuntimeError as exc:
-                _LOGGER.exception(str(exc))
                 self._printer_info = None
+                raise exc
             else:
                 title = re.search(
                     r"DREMEL [^\s+]+", printer_info[CONF_MACHINE_TYPE]
@@ -135,8 +135,8 @@ class Dremel3DPrinter:
             try:
                 job_status = default_request(self._host, PRINTER_STATUS_COMMAND)
             except RuntimeError as exc:
-                _LOGGER.exception(str(exc))
                 self._job_status = None
+                raise exc
             else:
                 self._job_status = {
                     DOOR_OPEN[1]: job_status[DOOR_OPEN[0]],
@@ -173,8 +173,8 @@ class Dremel3DPrinter:
                 )
                 print(extra_status)
             except RuntimeError as exc:
-                _LOGGER.exception(str(exc))
                 self._printer_extra_stats = None
+                raise exc
             else:
                 max_platform_temperature = re.search(
                     r"0-(\d+)", extra_status[PLATFORM_TEMPERATURE_RANGE[0]]
@@ -199,10 +199,10 @@ class Dremel3DPrinter:
             _LOGGER.exception(str(exc))
 
     def get_printer_info(self) -> dict[str, Any]:
-        return self._printer_info
+        return (self._printer_info or {}) | (self._printer_extra_stats or {})
 
     def get_job_status(self) -> dict[str, Any]:
-        return (self._job_status or {}) | (self._printer_extra_stats or {})
+        return self._job_status
 
     def get_manufacturer(self) -> str:
         return DREMEL_MANUFACTURER
@@ -235,7 +235,7 @@ class Dremel3DPrinter:
         return f"http://{self._host}:{CAMERA_PORT}/?action=stream"
 
     def get_snapshot_url(self) -> str:
-        return (f"http://{self._host}:{CAMERA_PORT}/?action=snapshot",)
+        return f"http://{self._host}:{CAMERA_PORT}/?action=snapshot"
 
     def get_serial_number(self) -> str:
         return self.get_printer_info().get(CONF_SERIAL_NUMBER)
@@ -279,9 +279,9 @@ class Dremel3DPrinter:
 
     def get_temperature_attributes(self, temp_type: str) -> dict[str, int]:
         return {
-            "target_temp": self._job_status.get(f"{temp_type}_target_temperature"),
+            "target_temp": self.get_job_status().get(f"{temp_type}_target_temperature"),
             "max_temp": int(
-                self._printer_extra_stats.get(f"{temp_type}_max_temperature")
+                self.get_printer_info().get(f"{temp_type}_max_temperature")
             ),
         }
 
