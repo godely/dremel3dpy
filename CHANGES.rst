@@ -3,6 +3,14 @@ Changelog
 
 A list of changes between each release.
 
+0.3.3 (2022-05-20)
+^^^^^^^^^^^^^^^^^^
+- Added return statement to boolean methods and fixed firmware version return
+
+0.3.2 (2022-05-20)
+^^^^^^^^^^^^^^^^^^
+- Minor fixes
+
 0.3.1 (2022-05-20)
 ^^^^^^^^^^^^^^^^^^
 - Added is_door_open method to the API

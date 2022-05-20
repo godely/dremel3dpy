@@ -171,7 +171,6 @@ class Dremel3DPrinter:
                     port=EXTRA_STATUS_PORT,
                     path=HOME_MESSAGE_PATH,
                 )
-                print(extra_status)
             except RuntimeError as exc:
                 self._printer_extra_stats = None
                 raise exc
@@ -214,22 +213,25 @@ class Dremel3DPrinter:
         return self.get_printer_info().get(CONF_TITLE)
 
     def get_firmware_version(self) -> str:
-        return self.get_printer_info().get(CONF_TITLE)
+        return self.get_printer_info().get(CONF_FIRMWARE_VERSION)
 
     def is_printing(self) -> bool:
-        self.get_printing_status() != "ready" and self.get_printing_status() != "completed"
+        return (
+            self.get_printing_status() != "ready"
+            and self.get_printing_status() != "completed"
+        )
 
     def is_paused(self) -> bool:
-        self.get_printing_status() == "paused"
+        return self.get_printing_status() == "paused"
 
     def is_pausing(self) -> bool:
-        self.get_printing_status() == "pausing"
+        return self.get_printing_status() == "pausing"
 
     def is_running(self) -> bool:
-        self.is_printing() and not self.is_paused() and not self.is_pausing()
+        return self.is_printing() and not self.is_paused() and not self.is_pausing()
 
     def is_door_open(self) -> bool:
-        self.get_job_status().get(DOOR_OPEN[1]) == 1
+        return self.get_job_status().get(DOOR_OPEN[1]) == 1
 
     def get_stream_url(self) -> str:
         return f"http://{self._host}:{CAMERA_PORT}/?action=stream"
