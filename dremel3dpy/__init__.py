@@ -74,7 +74,6 @@ from dremel3dpy.helpers.constants import (
     RESUME_COMMAND,
     STATS_FILAMENT_USED,
     STATS_FILE_NAME,
-    STATS_INFILL_SPARSE_DENSITY,
     STATS_LAYER_HEIGHT,
     STATS_SOFTWARE,
     STATUS,
@@ -215,11 +214,23 @@ class Dremel3DPrinter:
     def get_firmware_version(self) -> str:
         return self.get_printer_info().get(CONF_FIRMWARE_VERSION)
 
+    def get_total_time(self) -> int:
+        return self.get_job_status().get(ESTIMATED_TOTAL_TIME[1])
+
+    def get_remaining_time(self) -> int:
+        return self.get_job_status().get(REMAINING_TIME[1])
+
+    def is_busy(self) -> bool:
+        return self.get_job_status().get(STATUS[1]) == "busy"
+
     def is_printing(self) -> bool:
         return (
             self.get_printing_status() != "ready"
             and self.get_printing_status() != "completed"
         )
+
+    def is_completed(self) -> bool:
+        return self.get_printing_status() == "completed"
 
     def is_paused(self) -> bool:
         return self.get_printing_status() == "paused"
@@ -229,6 +240,9 @@ class Dremel3DPrinter:
 
     def is_running(self) -> bool:
         return self.is_printing() and not self.is_paused() and not self.is_pausing()
+
+    def is_building(self) -> bool:
+        return self.get_printing_status() == "building"
 
     def is_door_open(self) -> bool:
         return self.get_job_status().get(DOOR_OPEN[1]) == 1
@@ -310,9 +324,6 @@ class Dremel3DPrinter:
             STATS_FILAMENT_USED: re.search("Filament used: ([0-9.]+)", data).group(1)
             + "m",
             STATS_FILE_NAME: filename,
-            STATS_INFILL_SPARSE_DENSITY: re.search(
-                "infill_sparse_density = ([0-9.]+)", data
-            ).group(1),
             STATS_LAYER_HEIGHT: re.search("Layer height: ([0-9.]+)", data).group(1)
             + "mm",
             STATS_SOFTWARE: re.search("Generated with (.+)", data).group(1),

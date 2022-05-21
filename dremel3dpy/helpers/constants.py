@@ -1,5 +1,7 @@
 """Constants for the Dremel 3D Printer (3D20, 3D40, 3D45) integration."""
 
+import cv2
+
 MAJOR_VERSION = 0
 MINOR_VERSION = 3
 PATCH_VERSION = "4"
@@ -61,13 +63,19 @@ STATS_FILE_NAME = "file_name"
 STATS_FILAMENT_USED = "filament_used"
 STATS_LAYER_HEIGHT = "layer_height"
 STATS_SOFTWARE = "software"
-STATS_INFILL_SPARSE_DENSITY = "infill_sparse_density"
 
 EVENT_DATA_NEW_PRINT_STATS = "dremel_3d_printer_new_print_stats"
 
 REQUEST_TIMEOUT = 30
+GIF_UPDATE_JOB_STATUS_INTERVAL = 10
 
-DREMEL_MANUFACTURER = "Dremel"
+GIF_ENCODE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
+GIF_DEFAULT_FRAMES = 60
+GIF_DEFAULT_FPS = 10
+GIF_COMPLETED_GRACE_PERIOD = 20
+GIF_POLLING_INTERVAL_UNTIL_START = 5
+
+DREMEL_MANUFACTURER = "Dremel Digilab"
 
 MESSAGE = "message"
 ERROR_CODE = "error_code"
