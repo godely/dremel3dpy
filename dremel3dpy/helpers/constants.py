@@ -10,7 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAJOR_VERSION = 0
 MINOR_VERSION = 5
-PATCH_VERSION = "0"
+PATCH_VERSION = "1"
 
 __version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
 

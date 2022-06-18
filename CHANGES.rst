@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+0.5.1 (2022-06-18)
+- Adjust versioning of dependencies to be >=
+
 0.5.0 (2022-06-18)
 - Add CLI and remove versioning from dependencies
 
