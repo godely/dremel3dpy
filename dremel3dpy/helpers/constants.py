@@ -2,7 +2,6 @@
 
 import logging
 import signal
-from datetime import datetime
 
 import cv2
 
@@ -10,7 +9,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAJOR_VERSION = 0
 MINOR_VERSION = 5
-PATCH_VERSION = "2"
+PATCH_VERSION = "3"
 
 __version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
 
@@ -18,7 +17,7 @@ PROJECT_NAME = "dremel3dpy"
 PROJECT_PACKAGE_NAME = "dremel3dpy"
 PROJECT_AUTHOR = "Gustavo Stor"
 PROJECT_EMAIL = "gus@storhub.io"
-PROJECT_COPYRIGHT = " 2022, {}".format(PROJECT_AUTHOR)
+PROJECT_COPYRIGHT = f" 2022, {PROJECT_AUTHOR}"
 PROJECT_LICENSE = "MIT"
 PROJECT_URL = "https://github.com/godely/dremel3dpy"
 PROJECT_DESCRIPTION = "A Dremel 3D Printer Python Library running on Python 3"
@@ -40,7 +39,7 @@ PROJECT_GITHUB_USERNAME = "godely"
 PROJECT_GITHUB_REPOSITORY = "dremel3dpy"
 PROJECT_KEYWORDS = ["python", "dremel", "3d", "printer", "3d-printer"]
 
-PYPI_URL = "https://pypi.python.org/pypi/{}".format(PROJECT_PACKAGE_NAME)
+PYPI_URL = f"https://pypi.python.org/pypi/{PROJECT_PACKAGE_NAME}"
 
 SERVICE_PRINT_JOB = "print_job"
 SERVICE_PAUSE_JOB = "pause_job"

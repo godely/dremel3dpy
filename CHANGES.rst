@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+0.5.3 (2022-06-18)
+- Loosen requirements versioning
+
 0.5.2 (2022-06-18)
 - Fix requirements
 
