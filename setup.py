@@ -33,7 +33,6 @@ setup(
     py_modules=["dremel3dpy"],
     packages=PACKAGES,
     install_requires=[
-        "async-timeout==4.0.2",
         "requests==2.27.1",
         "urllib3==1.26.9",
         "validators==0.19.0",

@@ -1,5 +1,4 @@
-async-timeout==4.0.2
-requests==2.27.1
-urllib3==1.26.9
-validators==0.19.0
-yarl==1.7.2
+requests
+urllib3
+validators
+yarl

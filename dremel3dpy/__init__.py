@@ -92,6 +92,13 @@ class Dremel3DPrinter:
         self._printer_info = None
         self._job_status = None
         self._printer_extra_stats = None
+        self._total_time = 0
+        self._is_printing = False
+        self._is_building = False
+        self._is_calibrating = False
+        self._is_starting = False
+        self._is_heating = False
+        self._is_finished = False
         self.refresh()
 
     def set_printer_info(self, refresh=False):
@@ -103,12 +110,17 @@ class Dremel3DPrinter:
                 self._printer_info = None
                 raise exc
             else:
-                title = re.search(
-                    r"DREMEL [^\s+]+", printer_info[CONF_MACHINE_TYPE]
-                ).group(0)
-                model = re.search(
-                    r"DREMEL ([^\s+]+)", printer_info[CONF_MACHINE_TYPE]
-                ).group(1)
+                title = None
+                model = None
+                try:
+                    title = re.search(
+                        r"DREMEL [^\s+]+", printer_info[CONF_MACHINE_TYPE]
+                    ).group(0)
+                    model = re.search(
+                        r"DREMEL ([^\s+]+)", printer_info[CONF_MACHINE_TYPE]
+                    ).group(1)
+                except Exception:
+                    raise
                 self._printer_info = {
                     CONF_HOST: self._host,
                     CONF_API_VERSION: printer_info[CONF_API_VERSION],
@@ -132,6 +144,11 @@ class Dremel3DPrinter:
         """Return stats related to the printer and the printing job."""
         if refresh or self._job_status is None:
             try:
+                last_printing_status = (
+                    self.get_printing_status()
+                    if self.get_job_status() is not None
+                    else "idle"
+                )
                 job_status = default_request(self._host, PRINTER_STATUS_COMMAND)
             except RuntimeError as exc:
                 self._job_status = None
@@ -141,6 +158,7 @@ class Dremel3DPrinter:
                     DOOR_OPEN[1]: job_status[DOOR_OPEN[0]],
                     CHAMBER_TEMPERATURE[1]: job_status[CHAMBER_TEMPERATURE[0]],
                     ELAPSED_TIME[1]: job_status[ELAPSED_TIME[0]],
+                    REMAINING_TIME[1]: job_status[REMAINING_TIME[0]],
                     ESTIMATED_TOTAL_TIME[1]: job_status[ESTIMATED_TOTAL_TIME[0]],
                     EXTRUDER_TEMPERATURE[1]: job_status[EXTRUDER_TEMPERATURE[0]],
                     EXTRUDER_TARGET_TEMPERATURE[1]: job_status[
@@ -156,9 +174,70 @@ class Dremel3DPrinter:
                     ],
                     PLATFORM_TEMPERATURE[1]: job_status[PLATFORM_TEMPERATURE[0]],
                     PROGRESS[1]: job_status[PROGRESS[0]],
-                    REMAINING_TIME[1]: job_status[REMAINING_TIME[0]],
                     STATUS[1]: job_status[STATUS[0]],
                 }
+                current_printing_status = self.get_printing_status()
+                if last_printing_status != current_printing_status:
+                    self._is_printing = False
+                    self._is_building = False
+                    self._is_calibrating = False
+                    self._is_starting = False
+                    self._is_heating = False
+                    self._is_finished = False
+                    if current_printing_status == "building":
+                        self._is_printing = True
+                        self._is_building = True
+                    elif (
+                        current_printing_status == "resuming"
+                        or current_printing_status == "paused"
+                        or current_printing_status == "pausing"
+                    ):
+                        self._is_printing = True
+                    elif current_printing_status == "preparing":
+                        self._is_printing = True
+                        if last_printing_status == "completed":
+                            self._is_heating = True
+                        else:
+                            self._is_calibrating = True
+                    elif (
+                        last_printing_status == "completed"
+                        and current_printing_status == "idle"
+                    ):
+                        self._is_printing = True
+                        self._is_starting = True
+                    elif (
+                        last_printing_status == "preparing"
+                        and current_printing_status == "idle"
+                    ):
+                        self._is_printing = True
+                        self._is_heating = True
+                    elif (
+                        last_printing_status == "building"
+                        and current_printing_status == "completed"
+                    ):
+                        self._is_finished = True
+                    _LOGGER.info(
+                        f"Printer changed its phase from {last_printing_status} to {current_printing_status}."
+                    )
+                    last_printing_status = current_printing_status
+            # Patch fix the total time. Sometimes when in a printing job this API can
+            # keep returning a total time of 0 but an actual estimated remaining time.
+            # Every time we call this API, if total_time is still not set, we check to
+            # see if the API returned a correct value for the estimated total time and
+            # use that as source of truth. Otherwise, we check to see if we the API
+            # returned at least a non-zero value for remaining time. The first time this
+            # happens we get the value of remaining time and use it as total_time and
+            # do not change it again.
+            if self._total_time == 0:
+                total_times = [0]
+                if (total_time := self._job_status[ESTIMATED_TOTAL_TIME[1]]) > 0:
+                    total_times += [total_time]
+                if (total_time := self._job_status[REMAINING_TIME[1]]) > 0:
+                    total_times += [self._job_status[REMAINING_TIME[1]]]
+                    if (elapsed_time := self._job_status[ELAPSED_TIME[1]]) > 0:
+                        total_times += [total_time + elapsed_time]
+                if (total_time := max(total_times)) > self._total_time:
+                    self._total_time = total_time
 
     def set_extra_status(self, refresh=False):
         """Return extra status that we grab from the Dremel webpage API."""
@@ -214,23 +293,44 @@ class Dremel3DPrinter:
     def get_firmware_version(self) -> str:
         return self.get_printer_info().get(CONF_FIRMWARE_VERSION)
 
-    def get_total_time(self) -> int:
-        return self.get_job_status().get(ESTIMATED_TOTAL_TIME[1])
-
     def get_remaining_time(self) -> int:
         return self.get_job_status().get(REMAINING_TIME[1])
+
+    def get_elapsed_time(self) -> int:
+        return self.get_job_status().get(ELAPSED_TIME[1])
+
+    def get_total_time(self) -> int:
+        return self.get_elapsed_time() + self.get_remaining_time()
+
+    def get_filament(self) -> str:
+        return self.get_job_status().get(FILAMENT[1])
 
     def is_busy(self) -> bool:
         return self.get_job_status().get(STATUS[1]) == "busy"
 
+    def is_ready(self) -> bool:
+        return self.get_job_status().get(STATUS[1]) == "ready"
+
     def is_printing(self) -> bool:
-        return (
-            self.get_printing_status() != "ready"
-            and self.get_printing_status() != "completed"
-        )
+        return self._is_printing
+
+    def is_finished(self) -> bool:
+        return self._is_finished
+
+    def is_heating(self) -> bool:
+        return self._is_heating
+
+    def is_calibrating(self) -> bool:
+        return self._is_calibrating
+
+    def is_starting(self) -> bool:
+        return self._is_starting
+
+    def is_not_printing(self) -> bool:
+        return not self.is_printing()
 
     def is_completed(self) -> bool:
-        return self.get_printing_status() == "completed"
+        return self._is_finished
 
     def is_paused(self) -> bool:
         return self.get_printing_status() == "paused"
@@ -238,11 +338,22 @@ class Dremel3DPrinter:
     def is_pausing(self) -> bool:
         return self.get_printing_status() == "pausing"
 
+    def is_aborted(self) -> bool:
+        return self.get_printing_status() == "aborted"
+
     def is_running(self) -> bool:
         return self.is_printing() and not self.is_paused() and not self.is_pausing()
 
     def is_building(self) -> bool:
-        return self.get_printing_status() == "building"
+        return (
+            self._is_building
+            and self.get_total_time() > 0
+            # This function is a maybe because there were times the initial calls to the API failed
+            # and the target temperature was always zero. A better solution in the future is use code
+            # that we already created to check if the platform/extruder temperatures are not moving.
+            and self.are_temperatures_maybe_within_target_range()
+            # Maybe change it to: self._is_building or (self._is_idle and self.get_total_temp() > 0 and self.are_temp...)
+        )
 
     def is_door_open(self) -> bool:
         return self.get_job_status().get(DOOR_OPEN[1]) == 1
@@ -259,8 +370,8 @@ class Dremel3DPrinter:
     def get_printing_status(self) -> str:
         job_status = self.get_job_status().get(JOB_STATUS[1])
         mapped_status = {
-            "": "ready",
-            "abort": "ready",
+            "": "idle",
+            "abort": "abort",
             "building": "building",
             "completed": "completed",
             "pausing": "pausing",
@@ -269,23 +380,6 @@ class Dremel3DPrinter:
             "!resuming": "resuming",
         }
         return mapped_status[job_status] if job_status in mapped_status else "unknown"
-
-    def get_printing_attributes(self) -> dict[str, Any]:
-        job_status_attrs = self.get_job_status()
-        return {
-            key: job_status_attrs[key]
-            for key in job_status_attrs.keys()
-            & {
-                ELAPSED_TIME[1],
-                ESTIMATED_TOTAL_TIME[1],
-                FAN_SPEED[1],
-                FILAMENT[1],
-                JOB_NAME[1],
-                JOB_STATUS[1],
-                NETWORK_BUILD[1],
-                REMAINING_TIME[1],
-            }
-        }
 
     def get_printing_progress(self) -> float:
         return self.get_job_status().get(PROGRESS[1])
@@ -300,6 +394,21 @@ class Dremel3DPrinter:
                 self.get_printer_info().get(f"{temp_type}_max_temperature")
             ),
         }
+
+    def is_maybe_temperature_within_target_range(self, temp_type):
+        temperature = self.get_temperature_type(temp_type)
+        target_temperature = self.get_temperature_attributes(temp_type)["target_temp"]
+        if target_temperature == 0:
+            return True
+        return temperature in range(target_temperature - 2, target_temperature + 3)
+
+    def are_temperatures_maybe_within_target_range(self) -> bool:
+        return all(
+            [
+                self.is_maybe_temperature_within_target_range(temp_type)
+                for temp_type in ["platform", "extruder"]
+            ]
+        )
 
     def _upload_print(self: str, file: str) -> tuple[str, dict[str, str]]:
         try:
@@ -320,13 +429,26 @@ class Dremel3DPrinter:
         return filename
 
     def _get_print_stats(self, filename: str, data: str) -> dict[str, str]:
+        filament_used = (
+            f"{match.group(1)}m"
+            if (match := re.search("Filament used: ([0-9.]+)", data)) is not None
+            else ""
+        )
+        layer_height = (
+            f"{match.group(1)}mm"
+            if (match := re.search("Layer height: ([0-9.]+)", data)) is not None
+            else ""
+        )
+        software = (
+            match.group(1)
+            if (match := re.search("Generated with (.+)", data)) is not None
+            else ""
+        )
         return {
-            STATS_FILAMENT_USED: re.search("Filament used: ([0-9.]+)", data).group(1)
-            + "m",
+            STATS_FILAMENT_USED: filament_used,
             STATS_FILE_NAME: filename,
-            STATS_LAYER_HEIGHT: re.search("Layer height: ([0-9.]+)", data).group(1)
-            + "mm",
-            STATS_SOFTWARE: re.search("Generated with (.+)", data).group(1),
+            STATS_LAYER_HEIGHT: layer_height,
+            STATS_SOFTWARE: software,
         }
 
     def start_print_from_file(self, filepath: str) -> tuple[str, dict[str, str]]:
@@ -340,14 +462,13 @@ class Dremel3DPrinter:
         ):
             file = open(filepath, "rb")
             data = file.read().decode("utf-8")
-            file.seek(0)
         else:
             raise RuntimeError(
                 "File path must be defined and point to a valid .gcode file."
             )
-        filename = self._upload_print(file)
+        filename = self._upload_print(data)
         try:
-            default_request({PRINT_COMMAND: filename})
+            default_request(self._host, {PRINT_COMMAND: filename})
             return self._get_print_stats(filename, data)
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
@@ -356,7 +477,7 @@ class Dremel3DPrinter:
         """
         Uploads a file to the printer, so it can start a print job. This file is fetched from an URL.
         """
-        if url is not None and url.lower().endswith(".gcode"):
+        if url is not None:
             try:
                 if validators.url(url) is True:
                     request = requests.get(url, timeout=REQUEST_TIMEOUT)
@@ -381,7 +502,7 @@ class Dremel3DPrinter:
                 raise exc
         else:
             raise RuntimeError("URL must be defined and be a valid gcode file")
-        filename = self._upload_print(file)
+        filename = self._upload_print(data)
         try:
             default_request(self._host, {PRINT_COMMAND: filename})
             return self._get_print_stats(filename, data)

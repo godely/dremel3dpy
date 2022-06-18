@@ -3,9 +3,16 @@ Changelog
 
 A list of changes between each release.
 
+0.5.0 (2022-06-18)
+- Add CLI and remove versioning from dependencies
+
+0.4.0 (2022-05-21)
+^^^^^^^^^^^^^^^^^^
+- Add camera timelapse functionality
+
 0.3.4 (2022-05-20)
 ^^^^^^^^^^^^^^^^^^
-- Added requirements.txt back
+- Added back requirements.txt
 
 0.3.3 (2022-05-20)
 ^^^^^^^^^^^^^^^^^^

@@ -1,113 +1,963 @@
 import asyncio
 import datetime
-import glob
+import functools
 import io
+import math
 import os
-import time
+import queue
+import threading
+import tkinter as tk
+from math import floor
+from platform import platform
 
 import cv2
 import imageio.v2 as imageio
-import imageio.v2 as imutils
+import imutils
 import numpy as np
+import requests
+from PIL import Image, ImageTk
+from tqdm import tqdm
 
 from dremel3dpy import _LOGGER, Dremel3DPrinter
 from dremel3dpy.helpers.constants import (
-    GIF_COMPLETED_GRACE_PERIOD,
-    GIF_DEFAULT_FPS,
-    GIF_DEFAULT_FRAMES,
-    GIF_ENCODE_PARAM,
-    GIF_POLLING_INTERVAL_UNTIL_START,
-    GIF_UPDATE_JOB_STATUS_INTERVAL,
+    DEFAULT_ADDITIONAL_OUTPUT_SIZE_PERCENTAGE,
+    DEFAULT_FINAL_GRACE_PERIOD,
+    DEFAULT_INITIAL_PREPARING_PERIOD,
+    DEFAULT_MAX_SIZE_MB,
+    DEFAULT_UPDATE_JOB_STATUS_INTERVAL,
+    FRAME_RECTANGLE_COLOR,
+    FRAME_RECTANGLE_MARGIN,
+    FRAME_RECTANGLE_OPACITY,
+    FRAME_RECTANGLE_PADDING,
+    FRAME_SCALING_FACTOR,
+    FRAME_TEXT_COLOR,
+    FRAME_TEXT_FONT_FACE,
+    FRAME_TEXT_FONT_SCALE,
+    FRAME_TEXT_LINE_TYPE,
+    FRAME_TEXT_THICKNESS,
+    FRAME_TEXT_VERTICAL_PADDING,
 )
+from dremel3dpy.helpers.timer import TaskTimer
 
 
 class Dremel3D45Timelapse:
-    def __init__(self, printer: Dremel3DPrinter):
+    def __init__(self, printer: Dremel3DPrinter, loop):
         """"""
         self._printer = printer
+        self._should_stop = False
+        self._writer = None
+        self._video_writer = None
+        self._output_file = None
+        self._max_output_size = None
+        self._printing_progress_bar = None
+        self._loop = loop
+        self._cap = cv2.VideoCapture(self._printer.get_stream_url())
+        self._cap_queue = queue.Queue()
 
-    def _append_to_gif(self, writer, cap):
-        ret, frame = cap.read()
-        if ret and np.size(frame) > 0:
-            frame = cv2.resize(frame, (500, 500))
-            image_bytes = cv2.imencode(".jpg", frame, GIF_ENCODE_PARAM)[1].tobytes()
+    def _consume_cap_buffer(self):
+        while self._should_continue():
+            ret, frame = self._cap.read()
+            if not ret:
+                continue
+            if not self._cap_queue.empty():
+                try:
+                    self._cap_queue.get_nowait()  # discard previous (unprocessed) frame
+                except queue.Empty:
+                    pass
+            self._cap_queue.put(frame)
+
+    def _get_progress_status(self):
+        return (
+            f"Progress: {self._printer.get_printing_progress()}%",
+            f"Elapsed: {self._format_seconds(self._printer.get_elapsed_time())}",
+            f"Remaining: {self._format_seconds(self._printer.get_remaining_time())}",
+            f"Total: {self._format_seconds(self._printer.get_total_time())}",
+        )
+
+    def _get_resource_status(self):
+        return (
+            f"Model: {self._printer.get_title()}",
+            f"Platform: {self._printer.get_temperature_type('platform')}C",
+            f"Extruder: {self._printer.get_temperature_type('extruder')}C",
+            f"Filament: {self._printer.get_filament()}",
+        )
+
+    def _format_seconds(self, seconds):
+        days, seconds = divmod(seconds, 86400)
+        hours, seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        if days > 0:
+            return "%dd %dh %dm %ds" % (days, hours, minutes, seconds)
+        elif hours > 0:
+            return "%dh %dm %ds" % (hours, minutes, seconds)
+        elif minutes > 0:
+            return "%dm %ds" % (minutes, seconds)
+        else:
+            return "%ds" % (seconds,)
+
+    def get_snapshot_as_ndarray(self, original, scale=FRAME_SCALING_FACTOR):
+        frame = self._cap_queue.get()
+        return self.get_snapshot_as_ndarray_from_frame(frame, original, scale)
+
+    def get_snapshot_as_ndarray_from_frame(self, frame, original, scale):
+        (h, w, _) = frame.shape
+        frame = cv2.resize(
+            frame,
+            (int(w * scale), int(h * scale)),
+            fx=0,
+            fy=0,
+            interpolation=cv2.INTER_LINEAR,
+        )
+        if original:
+            return frame
+
+        overlay = np.copy(frame)
+
+        # Sensors Box
+        resource_statuses = self._get_resource_status()
+        text_dimensions = list(
+            map(
+                lambda line: cv2.getTextSize(
+                    text=line,
+                    fontFace=FRAME_TEXT_FONT_FACE,
+                    fontScale=FRAME_TEXT_FONT_SCALE,
+                    thickness=FRAME_TEXT_THICKNESS,
+                )[0],
+                resource_statuses,
+            )
+        )
+
+        min_rectangle_width = functools.reduce(
+            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
+        )
+        min_rectangle_height = functools.reduce(
+            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
+        )
+        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
+        rectangle_h = (
+            min_rectangle_height
+            + FRAME_RECTANGLE_PADDING * 2
+            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
+        )
+        h, _, _ = frame.shape
+        origin_x, origin_y = (
+            FRAME_RECTANGLE_MARGIN,
+            FRAME_RECTANGLE_MARGIN,
+        )
+
+        cv2.rectangle(
+            img=overlay,
+            pt1=(origin_x, origin_y),
+            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
+            color=FRAME_RECTANGLE_COLOR,
+            thickness=-1,
+        )
+
+        acc_text_height = 0
+        for i, line in enumerate(resource_statuses):
+            text_height = text_dimensions[i][1]
+            cv2.putText(
+                img=overlay,
+                text=line,
+                org=(
+                    int(origin_x + FRAME_RECTANGLE_PADDING),
+                    int(
+                        acc_text_height
+                        + origin_y
+                        + FRAME_RECTANGLE_PADDING
+                        + text_height
+                    ),
+                ),
+                fontFace=FRAME_TEXT_FONT_FACE,
+                fontScale=FRAME_TEXT_FONT_SCALE,
+                color=FRAME_TEXT_COLOR,
+                thickness=FRAME_TEXT_THICKNESS,
+                lineType=FRAME_TEXT_LINE_TYPE,
+            )
+            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
+
+        # Progress Box
+        progress_statuses = self._get_progress_status()
+        text_dimensions = list(
+            map(
+                lambda line: cv2.getTextSize(
+                    text=line,
+                    fontFace=FRAME_TEXT_FONT_FACE,
+                    fontScale=FRAME_TEXT_FONT_SCALE,
+                    thickness=FRAME_TEXT_THICKNESS,
+                )[0],
+                progress_statuses,
+            )
+        )
+
+        min_rectangle_width = functools.reduce(
+            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
+        )
+        min_rectangle_height = functools.reduce(
+            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
+        )
+        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
+        rectangle_h = (
+            min_rectangle_height
+            + FRAME_RECTANGLE_PADDING * 2
+            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
+        )
+        h, _, _ = frame.shape
+        origin_x, origin_y = (
+            FRAME_RECTANGLE_MARGIN,
+            h - rectangle_h - FRAME_RECTANGLE_MARGIN,
+        )
+
+        cv2.rectangle(
+            img=overlay,
+            pt1=(origin_x, origin_y),
+            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
+            color=FRAME_RECTANGLE_COLOR,
+            thickness=-1,
+        )
+
+        acc_text_height = 0
+        for i, line in enumerate(progress_statuses):
+            text_height = text_dimensions[i][1]
+            cv2.putText(
+                img=overlay,
+                text=line,
+                org=(
+                    int(origin_x + FRAME_RECTANGLE_PADDING),
+                    int(
+                        acc_text_height
+                        + origin_y
+                        + FRAME_RECTANGLE_PADDING
+                        + text_height
+                    ),
+                ),
+                fontFace=FRAME_TEXT_FONT_FACE,
+                fontScale=FRAME_TEXT_FONT_SCALE,
+                color=FRAME_TEXT_COLOR,
+                thickness=FRAME_TEXT_THICKNESS,
+                lineType=FRAME_TEXT_LINE_TYPE,
+            )
+            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
+
+        # Progress Bar
+        PROGRESS_BAR_HEIGHT = 5
+        origin_x, origin_y = (
+            rectangle_w + 2 * FRAME_RECTANGLE_MARGIN,
+            h - FRAME_RECTANGLE_MARGIN - PROGRESS_BAR_HEIGHT,
+        )
+        rectangle_w = w - origin_x - FRAME_RECTANGLE_MARGIN
+        rectangle_h = PROGRESS_BAR_HEIGHT
+        cv2.rectangle(
+            img=overlay,
+            pt1=(origin_x, origin_y),
+            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
+            color=(255, 255, 255),
+            thickness=-1,
+        )
+
+        cv2.rectangle(
+            img=overlay,
+            pt1=(origin_x, origin_y),
+            pt2=(
+                origin_x
+                + round(rectangle_w * self._printer.get_printing_progress() / 100.0),
+                origin_y + rectangle_h,
+            ),
+            color=(0, 127, 0),
+            thickness=-1,
+        )
+
+        alpha = FRAME_RECTANGLE_OPACITY
+        overlay = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
+        return overlay
+
+    def _append_to_gif(self, writer, original, scale):
+        if self._should_continue():
+            _, img = self.get_snapshot_img(original, scale)
+            if img is not None:
+                writer.append_data(img)
+
+    def _append_to_video(self, writer, original, scale):
+        if self._should_continue():
+            frame = self.get_snapshot_as_ndarray(original, scale)
+            if frame is not None:
+                writer.write(frame)
+
+    # Add check for printer offline
+    def _should_continue(self):
+        if not (
+            self._loop.is_running()
+            and self._cap is not None
+            and self._cap.isOpened()
+            and (
+                (self._writer is not None and not self._writer.closed)
+                or (self._video_writer is not None and self._video_writer.isOpened())
+            )
+            and not (self._should_stop or self._loop.is_closed())
+            and os.path.exists(self._output_file)
+        ):
+            error_msg = "Due to some resources not being available or opened anymore, we can't continue the media creation. Interrupting..."
+            _LOGGER.exception(error_msg)
+            raise RuntimeError(error_msg)
+        if os.path.getsize(self._output_file) > self._max_output_size * (
+            1.0 + DEFAULT_ADDITIONAL_OUTPUT_SIZE_PERCENTAGE
+        ):
+            output_file_mb = os.path.getsize(self._output_file) / 1024.0 / 1024.0
+            max_output_mb = self._max_output_size / 1024.0 / 1024.0
+            error_msg = (
+                f"The size of your output file reached "
+                + "{:.2f}".format(output_file_mb)
+                + "MB (Current limit is "
+                + "{:.2f}".format(max_output_mb)
+                + "MB). Feel free to change that with the flag --max-output-size in megabytes. Interrupting..."
+            )
+            _LOGGER.exception(error_msg)
+            raise RuntimeError(error_msg)
+
+        return True
+
+    def _is_temperature_not_adjusting(self, temp_type, last_temperatures):
+        temperature = self._printer.get_temperature_type(temp_type)
+        target_temperature = self._printer.get_temperature_attributes(temp_type)[
+            "target_temp"
+        ]
+        not_updating = False
+        if not (
+            in_range := self._printer.is_maybe_temperature_within_target_range(
+                temp_type
+            )
+        ):
+            if (
+                target_temperature == 0 and temperature == last_temperatures[temp_type]
+            ) or (
+                target_temperature != 0
+                and (
+                    (
+                        target_temperature > temperature
+                        and temperature <= last_temperatures[temp_type]
+                    )
+                    or (
+                        target_temperature < temperature
+                        and temperature >= last_temperatures[temp_type]
+                    )
+                )
+            ):
+                not_updating = True
+        last_temperatures[temp_type] = temperature
+        return (in_range, not_updating)
+
+    def _wait_start_printing(self):
+        temps = ["platform", "extruder"]
+        last_temps = {key: 0 for key in temps}
+        self._total_temp_errors = 0
+
+        initial_printing_state_busy = (
+            self._printer.is_busy() and not self._printer.is_completed()
+        )
+
+        def _inner_wait_start_printing():
+            self._printer.set_job_status(refresh=True)
+
+            # Printer is not busy anymore, therefore we should quit waiting for the temperature warmup.
+            new_printing_state_busy = (
+                self._printer.is_busy() and not self._printer.is_completed()
+            )
+            if initial_printing_state_busy and not new_printing_state_busy:
+                error_msg = "The printer unexpectedly became no longer busy or has completed the printing job."
+                _LOGGER.warning(error_msg)
+                return False
+
+            if self._printer.is_building():
+                # Here we stop waiting because we reached a point where the printer
+                # phase is back on building and the API returned a positive number
+                # for the expected total time for the job to complete. Without that
+                # our lives becomes much harder measuring the resources.
+                return False
+            elif self._printer.is_printing():
+                # Here we keep on waiting because although the printer is not on the
+                # building phase, it's on the printing phase. Printing phase is anything
+                # that is not "completed" or "ready". So we would continue waiting here
+                # if the printer phase was either "pausing", "paused", "resuming" or
+                # "preparing", but not "building" (yet).
+                return True
+
+            # Lets check how many times we verified the temperature adjustments and it
+            # failed our checks.
+            temp_errors = list(
+                map(
+                    lambda temp_type: (
+                        self._is_temperature_not_adjusting(temp_type, last_temps)
+                    ),
+                    temps,
+                )
+            )
+            # TODO(stor): Fix this check. If the printer is not building, not paused, or, in other words,
+            # on the way from a non-printing status to a printing status, then we should check two things:
+            # 1. The target temperature is non-zero, at least after a few calls to the API, we will always
+            #    eventually have a value.
+            # 2. The temperatures are moving towards the target. If the target is lower, the temperatures
+            #    are decreasing with time. If they are higher, they are increasing. They can't be stuck
+            #    with the same value for so long, unless they reached the target temperature.
+            in_range_1, not_updating_1 = temp_errors[0]
+            in_range_2, not_updating_2 = temp_errors[1]
+            if (
+                (not in_range_1 or not in_range_2)
+                and (in_range_1 or not_updating_1)
+                and (in_range_2 or not_updating_2)
+            ):
+                self._total_temp_errors += 1
+            else:
+                self._total_temp_errors = 0
+
+            # We verified for 10 minutes straight that the temperatures
+            # were not adjusting, therefore we should quit.
+            if self._total_temp_errors > 60 * 10:
+                error_msg = "Platform or Extruder temperatures does not seem to be moving for the last 10 minutes. Interrupting..."
+                _LOGGER.exception(error_msg)
+                raise RuntimeError(error_msg)
+            return True
+
+        return _inner_wait_start_printing
+
+    def get_snapshot_img(self, original, scale, ext=".jpg"):
+        snapshot = self.get_snapshot_as_ndarray(original, scale=scale)
+        if snapshot is not None and np.size(snapshot) > 0:
+            try:
+                image_bytes = cv2.imencode(ext, snapshot)[1].tobytes()
+            except Exception as exc:
+                _LOGGER.exception(
+                    f"Could not find encoder for the specified extension {ext}."
+                )
+                raise exc
             buffer = io.BytesIO(image_bytes)
-            image = imageio.imread(buffer)
-            writer.append_data(image)
+            return snapshot, imageio.imread(buffer)
+        else:
+            return None, None
+
+    def _update_printing_progress_bar(self, silent):
+        if self._printing_progress_bar is not None:
+            if silent and self._printing_progress_bar.disable:
+                return self._printing_progress_bar
+            elif silent and not self._printing_progress_bar.disable:
+                self._printing_progress_bar.close()
+                return self._printing_progress_bar
+            elif not silent and not self._printing_progress_bar.disable:
+                return self._printing_progress_bar
+            else:
+                # Last case is that it's not silent and progress_bar is disabled.
+                self._printing_progress_bar.close()
+        self._printer.set_job_status(refresh=True)
+        self._printing_progress_bar = tqdm(
+            desc="Printing Progress",
+            initial=self._printer.get_printing_progress(),
+            total=100.0,
+            colour="green",
+            position=0,
+            leave=True,
+            unit="%",
+            disable=silent,
+        )
+        self._printing_progress_bar.refresh()
+        return self._printing_progress_bar
+
+    async def wait_target_temperatures(self, silent):
+        if not self._printer.is_busy():
+            error_msg = "When getting ready to warmup the printer, the job got cancelled. Interrupting..."
+            _LOGGER.exception(error_msg)
+            raise RuntimeError(error_msg)
+
+        if self._printer.is_building():
+            _LOGGER.info(
+                "The temperature sensors got to their target level and the printer is ready to start building."
+            )
+            return False
+
+        if self._printer.is_aborted():
+            error_msg = "Printing job was aborted. Interrupting..."
+            _LOGGER.exception(error_msg)
+            raise RuntimeError(error_msg)
+
+        # While the printer is paused, we keep running this loop until is changes phase.
+        if self._printer.is_paused() or self._printer.is_pausing():
+            return True
+
+        # We patched this function and now should work properly. So, if the job is completed,
+        # exit this job.
+        if self._printer.is_completed():
+            return False
+
+        # After all the check aboves, the only phases the printer can be are:
+        # - Idle
+        # - Building
+        # - Preparing
+        # - Resuming
+
+        printing_progress_bar = self._update_printing_progress_bar(True)
+        printing_progress_bar.close()
+
+        # We close the printing progress bar to restart the temperature progress bars.
+        _LOGGER.info("Waiting on temperatures to rise to their target levels.")
+        temperature_progress = {
+            temp_type: tqdm(
+                desc=f"{temp_type.capitalize()} Temperature",
+                initial=self._printer.get_temperature_type(temp_type),
+                total=None,
+                colour="blue",
+                leave=False,
+                unit="°C",
+                bar_format="{desc}: {n_fmt}°C [{elapsed}]\b\b",
+                disable=silent,
+            )
+            for temp_type in ["platform", "extruder"]
+        }
+
+        def update_temperature_progress():
+            self._printer.set_job_status(refresh=True)
+            for i, temp_type in enumerate(temperature_progress.keys()):
+                target_temp = self._printer.get_temperature_attributes(temp_type)[
+                    "target_temp"
+                ]
+                progress_bar = temperature_progress[temp_type]
+                progress_bar.position = i
+                if target_temp != 0:
+                    progress_bar.n = 0
+                    progress_bar.total = target_temp
+                    progress_bar.bar_format = "{l_bar}{bar}{r_bar}\b\b"
+                progress_bar.update(
+                    self._printer.get_temperature_type(temp_type) - progress_bar.n
+                )
+                progress_bar.refresh()
+
+        wait_start_printing = self._wait_start_printing()
+
+        async def keep_waiting_condition():
+            return self._should_continue() and wait_start_printing()
+
+        timer = TaskTimer(
+            continue_condition=keep_waiting_condition,
+            refresh_fn=update_temperature_progress,
+            sleep_interval=1,
+            loop=self._loop,
+        )
+        await timer.start()
+        [progress.close() for _, progress in temperature_progress.items()]
+
+        if not self._printer.is_busy():
+            error_msg = "The job got abruptly cancelled. Interrupting..."
+            _LOGGER.exception(error_msg)
+            raise RuntimeError(error_msg)
+
+        _LOGGER.info(
+            f"Platform temperature reached the target of {self._printer.get_temperature_type('platform')}°C"
+        )
+        _LOGGER.info(
+            f"Extruder temperature reached the target of {self._printer.get_temperature_type('extruder')}°C"
+        )
+        return False
+
+    async def gen_media_file(
+        self,
+        output,
+        fps,
+        duration,
+        length,
+        idle,
+        silent,
+        file_append_fn,
+    ):
+        start = datetime.datetime.now()
+        has_graceful_exit = not idle and duration
+        global snapshot_interval
+        snapshot_interval = 1.0
+
+        try:
+            if not idle:
+                # Initial wait while the machine has probably started a printing job
+                # but its status hasn't been updated to busy.
+                if not (
+                    self._printer.is_busy() and self._printer.get_remaining_time() > 0
+                ):
+                    _LOGGER.info(
+                        "Gracefully waiting for at most 20 minutes for the printer to start."
+                    )
+
+                    start_progress = tqdm(
+                        desc="Waiting for the printer to start a new print job...",
+                        initial=0,
+                        total=None,
+                        unit_scale=1,
+                        colour="white",
+                        position=0,
+                        leave=False,
+                        bar_format="{desc}: {elapsed}\b\b",
+                        disable=silent,
+                    )
+
+                    async def keep_waiting_get_busy_condition():
+                        return self._should_continue() and not (
+                            self._printer.is_busy()
+                            and self._printer.get_remaining_time() > 0
+                        )
+
+                    def start_refresh_fn():
+                        self._printer.set_job_status(refresh=True)
+                        start_progress.update()
+
+                    timer = TaskTimer(
+                        continue_condition=keep_waiting_get_busy_condition,
+                        refresh_fn=start_refresh_fn,
+                        sleep_interval=1,
+                        total_time=DEFAULT_INITIAL_PREPARING_PERIOD,
+                        loop=self._loop,
+                    )
+                    await timer.start()
+                    start_progress.close()
+                    _LOGGER.info(
+                        "Printer is ready to start heating its platform and extruder and starts building."
+                    )
+
+                if duration:
+                    snapshot_interval = (self._printer.get_remaining_time() + 0.0) / (
+                        duration * fps
+                    )
+                elif length:
+                    snapshot_interval = 1.0 / fps
+                else:
+                    error_msg = "This error is unlikely to happen. When not in --idle mode, even if you don't define the number of seconds in the output media by definining --duration nor --length, we'll calculate it automatically for you using the flag --max-output-size which will always have a default value."
+                    _LOGGER.exception(error_msg)
+                    raise RuntimeError(error_msg)
+
+                await self.wait_target_temperatures(silent)
+            else:
+                snapshot_interval = 1.0 / fps
+
+            _LOGGER.info(
+                "The printer adjusted the temperatures and its ready to start printing."
+            )
+            _LOGGER.info(f"A snapshot will be taken every {snapshot_interval} seconds.")
+
+            async def keep_recording_condition():
+                self._printer.set_job_status(refresh=True)
+                if self._should_continue():
+                    if idle:
+                        return True
+                    if (
+                        not self._printer.is_busy()
+                        or self._printer.is_completed()
+                        or not self._printer.is_printing()
+                    ):
+                        _LOGGER.info(f"Your printer has completed printing.")
+                        return False
+                    if self._printer.is_paused() or self._printer.is_pausing():
+                        return True
+                    if self._printer.is_building():
+                        return True
+                    return not await self.wait_target_temperatures(silent)
+                return False
+
+            def refresh_recording_fn():
+                self._printer.set_job_status(refresh=True)
+                if not idle:
+                    printing_progress_bar = self._update_printing_progress_bar(silent)
+                    printing_progress_bar.update(
+                        self._printer.get_printing_progress() - printing_progress_bar.n
+                    )
+                    printing_progress_bar.refresh()
+                file_append_fn()
+
+            timer = TaskTimer(
+                continue_condition=keep_recording_condition,
+                refresh_fn=refresh_recording_fn,
+                snapshot_interval=snapshot_interval,
+                total_time=(length and length - 1) or None,
+                loop=self._loop,
+            )
+            await timer.start()
+            printing_progress = self._update_printing_progress_bar(silent)
+            printing_progress.close()
+
+            # We just add this graceful exit period for the --duration arg.
+            if has_graceful_exit:
+                _LOGGER.info(
+                    "Now that the printer finished building, your setup requires a few additional grace seconds to be added to the media so it shows clean pictures without the extrudor motor in front of it."
+                )
+
+                completing_progress = tqdm(
+                    desc="Finishing...",
+                    initial=0,
+                    total=fps,
+                    unit_scale=1,
+                    colour="white",
+                    position=0,
+                    leave=False,
+                    disable=silent,
+                )
+
+                async def keep_completing_condition():
+                    return self._should_continue() and (
+                        self._printer.is_building()
+                        or self._printer.is_completed()
+                        or self._printer.is_ready()
+                    )
+
+                def refresh_completing_fn():
+                    self._printer.set_job_status(refresh=True)
+                    completing_progress.update(1)
+                    file_append_fn()
+                    _LOGGER.info(self._printer.get_printing_status())
+
+                timer = TaskTimer(
+                    continue_condition=keep_completing_condition,
+                    refresh_fn=refresh_completing_fn,
+                    snapshot_interval=(DEFAULT_FINAL_GRACE_PERIOD + 0.0) / fps,
+                    total_time=DEFAULT_FINAL_GRACE_PERIOD,
+                    loop=self._loop,
+                )
+                await timer.start()
+                completing_progress.close()
+                _LOGGER.info("All done, feel free to enjoy your output gif or video!")
+
+            end = datetime.datetime.now()
+            _LOGGER.info(f"Total timelapse creation time: {end - start}.")
+            _LOGGER.info(
+                f"Total output file size: "
+                + "{:.2f}".format(os.path.getsize(output) / 1024.0 / 1024.0)
+                + "MB"
+            )
+        except asyncio.exceptions.CancelledError as exc:
+            raise exc
+        except RuntimeError as exc:
+            raise exc
+        except Exception as exc:
+            raise exc
+        finally:
+            _LOGGER.info("Recording completed. Releasing resources.")
+            self.stop_timelapse()
+
+    def _start_media_record(
+        self, output_path, fps, duration, length, write_and_close_fn
+    ):
+        filepath, filename = os.path.split(output_path)
+        _, extension = os.path.splitext(output_path)
+        _LOGGER.info(
+            f"Creating a temporary {extension} file to hold 1 single frame of the video capture in order to measure the expected size in bytes by frame."
+        )
+        hidden_temp_file = os.path.join(filepath, f".{filename}")
+        write_and_close_fn(hidden_temp_file)
+        bytes_per_frame = bytes_per_frame = os.path.getsize(hidden_temp_file)
+        os.remove(hidden_temp_file)
+        _LOGGER.info(
+            f"We estimate that each frame saved to your media will increase the final file size by "
+            + "{:.2f}".format(bytes_per_frame / 1024.0)
+            + "KB."
+        )
+        max_output_bytes = self._max_output_size
+        max_total_frames = max_output_bytes / bytes_per_frame
+        if duration:
+            # If duration is set, we might need to change the fps
+            # in order to not extrapolate the maximum output size.
+            if max(1, round(max_total_frames / duration)) < fps:
+                old_fps = fps
+                fps = max(1, round(max_total_frames / duration))
+                _LOGGER.warning(
+                    "We needed to make a few adjustments to your media settings to respect your resource limits."
+                )
+                _LOGGER.warning(
+                    f"The --max-output-size flag (with a default value of {DEFAULT_MAX_SIZE_MB}MB) is "
+                    + "{:.2f}".format(max_output_bytes / 1024.0 / 1024.0)
+                    + "MB."
+                )
+                _LOGGER.warning(
+                    f"In order for the final media file does not extrapolate that size, it can have at most {round(max_total_frames)} frames saved to it."
+                )
+                _LOGGER.warning(
+                    f"Since you defined an output media that will cover the entire printing job timelapse in {duration}s, we wanted to respect that. Therefore, the number of frames/second needed to be reduced from {old_fps} to {fps}."
+                )
+        elif length:
+            # If length is set, the timelapse of the media won't
+            # go through all of the painting job, for only for
+            # the first length seconds. Let's apply the same logic
+            # here to maybe recalculate the fps based on the max
+            # output size.
+            if max(1, round(max_total_frames / length)) < fps:
+                old_fps = fps
+                fps = max(1, round(max_total_frames / duration))
+                _LOGGER.warning(
+                    "We needed to make a few adjustments to your media settings to respect your resource limits."
+                )
+                _LOGGER.warning(
+                    f"The --max-output-size flag (with a default value of {DEFAULT_MAX_SIZE_MB}MB) is "
+                    + "{:.2f}".format(max_output_bytes / 1024.0 / 1024.0)
+                    + "MB."
+                )
+                _LOGGER.warning(
+                    f"In order for the final media file does not extrapolate that size, it can have at most {round(max_total_frames)} frames saved to it."
+                )
+                _LOGGER.warning(
+                    f"Since you defined an output media final that will record {length}s of the printing job, we wanted to respect that. Therefore, the number of frames/second needed to be reduced from {old_fps} to {fps}."
+                )
+        else:
+            # If duration or length are not set, we keep fps as it is, but we
+            # prioritize defining a timelapse duration, and not a fixed length,
+            # that will keep the file size not extrapolate maximum output size.
+            duration = max_total_frames / fps
+            _LOGGER.warning(
+                f"You did not specify a duration nor a length of how many seconds your final media file will have (either a fast timelapse for the case of --duration or the exact number of seconds for the case of --length). Therefore, in order to keep the output file size within "
+                + "{:.2f}".format(max_output_bytes / 1024.0 / 1024.0)
+                + "MB, we defined that the output media file will have approximately "
+                + "{:.1f}".format(duration)
+                + " seconds."
+            )
+        assert duration is not None or length is not None
+        return fps, duration, length
 
     async def start_timelapse(
         self,
-        gif_path,
-        gif_fps=GIF_DEFAULT_FPS,
-        gif_total_frames=GIF_DEFAULT_FRAMES,
+        output_path,
+        fps,
+        max_output_size,
+        duration,
+        length,
+        idle,
+        original,
+        scale,
+        silent,
     ):
-        await asyncio.sleep(5)
-        self._printer.set_job_status(refresh=True)
-        if not self._printer.is_busy():
-            raise RuntimeError(
-                "Printer must be printing a job in order to generate a timelapse gif"
-            )
+        _LOGGER.info(f"Building a timelapse gif to {output_path}.")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        self._writer = imageio.get_writer(output_path, mode="I", fps=fps, format="GIF")
+        self._output_file = output_path
+        self._max_output_size = max_output_size * 1024.0 * 1024.0
         self._should_stop = False
-        cap = cv2.VideoCapture(self._printer.get_stream_url())
-        if os.path.exists(gif_path):
-            os.remove(gif_path)
 
-        while (
-            not self._should_stop
-            and self._printer.is_busy()
-            and not self._printer.is_building()
-        ):
-            self._printer.set_job_status(refresh=True)
-            await asyncio.sleep(GIF_POLLING_INTERVAL_UNTIL_START)
+        def write_and_close_fn(temp_file):
+            temp_writer = imageio.get_writer(temp_file, mode="I", fps=fps, format="GIF")
+            self._append_to_gif(temp_writer, original, scale)
+            temp_writer.close()
 
-        self._printer.set_job_status(refresh=True)
-        total_time = max(
-            self._printer.get_total_time(), self._printer.get_remaining_time()
+        t = threading.Thread(target=self._consume_cap_buffer)
+        t.daemon = True
+        t.start()
+
+        fps, duration, length = self._start_media_record(
+            output_path, fps, duration, length, write_and_close_fn
         )
-        if total_time == 0:
-            # Default total time if we are not able to grab it from the API
-            # is 1 hour.
-            total_time = 60 * 60
-            _LOGGER.warning(
-                "Couldn't fetch total time from the printing job, using 1 hour as default"
-            )
 
-        sleep_interval = total_time / gif_total_frames
-        with imageio.get_writer(gif_path, mode="I", fps=gif_fps) as writer:
-            next_refresh_job_status_time = datetime.datetime.now() + datetime.timedelta(
-                seconds=GIF_UPDATE_JOB_STATUS_INTERVAL
-            )
-            while (
-                cap.isOpened()
-                and not self._should_stop
-                and self._printer.is_busy()
-                and self._printer.is_building()
-            ):
-                if (now := datetime.datetime.now()) >= next_refresh_job_status_time:
-                    self._printer.set_job_status(refresh=True)
-                    next_refresh_job_status_time = now + datetime.timedelta(
-                        seconds=GIF_UPDATE_JOB_STATUS_INTERVAL
-                    )
+        await self.gen_media_file(
+            output_path,
+            fps,
+            duration,
+            length,
+            idle,
+            silent,
+            lambda: self._append_to_gif(self._writer, original, scale),
+        )
 
-                # Skip appending to the gif while the printer is printing but not building
-                # (i.e, paused, pausing, resuming or preparing).
-                if self._printer.is_building():
-                    self._append_to_gif(writer, cap)
-                await asyncio.sleep(sleep_interval)
-            self._printer.set_job_status(refresh=True)
-            now = datetime.datetime.now()
-            while (
-                cap.isOpened()
-                and not self._should_stop
-                and datetime.datetime.now()
-                < now + datetime.timedelta(seconds=GIF_COMPLETED_GRACE_PERIOD)
-            ):
-                if self._printer.is_completed():
-                    self._append_to_gif(writer, cap)
-                await asyncio.sleep(max(1 / gif_fps, 0.1))
-            cap.release()
-            writer.close()
-            cv2.destroyAllWindows()
+    def _get_scaled_dimensions(self, scale):
+        frame = self.get_snapshot_as_ndarray(True, scale)
+        if frame is None:
+            return (0, 0)
+        return frame.shape[:2]
+
+    async def start_record(
+        self,
+        output_path,
+        fps,
+        max_output_size,
+        duration,
+        length,
+        idle,
+        original,
+        scale,
+        silent,
+    ):
+        _LOGGER.info(f"Starting a video recording to {output_path}.")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+        (oh, ow) = self._get_scaled_dimensions(1)
+        (h, w) = self._get_scaled_dimensions(scale)
+        if oh != h or ow != w:
+            _LOGGER.info(
+                "Frame dimensions changed from ({ow},{oh}) to ({w},{h}), scaled by {scale}."
+            )
+        self._video_writer = cv2.VideoWriter(
+            output_path,
+            cv2.VideoWriter_fourcc("M", "J", "P", "G"),
+            fps,
+            (w, h),
+        )
+        self._output_file = output_path
+        self._max_output_size = max_output_size * 1024.0 * 1024.0
+        self._should_stop = False
+
+        def write_and_close_fn(temp_file):
+            temp_writer = cv2.VideoWriter(
+                temp_file,
+                cv2.VideoWriter_fourcc("M", "J", "P", "G"),
+                fps,
+                (w, h),
+            )
+            self._append_to_video(temp_writer, original, scale)
+            temp_writer.release()
+
+        t = threading.Thread(target=self._consume_cap_buffer)
+        t.daemon = True
+        t.start()
+
+        fps, duration, length = self._start_media_record(
+            output_path, fps, duration, length, write_and_close_fn
+        )
+
+        await self.gen_media_file(
+            output_path,
+            fps,
+            duration,
+            length,
+            idle,
+            silent,
+            lambda: self._append_to_video(self._video_writer, original, scale),
+        )
+
+    def _play_video(self, streamCap, lbVideo, original, scale):
+        self._printer.set_job_status(refresh=True)
+        original_canvas = original and self._printer.is_running()
+        _, frame = streamCap.read()
+        snapshot = self.get_snapshot_as_ndarray_from_frame(
+            frame, original_canvas, scale
+        )
+        cv2image = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGBA)
+        fromarray = Image.fromarray(cv2image)
+        imgtk = ImageTk.PhotoImage(image=fromarray)
+        lbVideo.imgtk = imgtk
+        lbVideo.configure(image=imgtk)
+
+    async def start_stream(self, original, scale):
+        try:
+            streamCap = cv2.VideoCapture(self._printer.get_stream_url())
+            window = tk.Tk(className="3D45 Stream")
+            window.resizable(width=False, height=False)
+            (h, w) = self._get_scaled_dimensions(scale)
+            window.geometry(f"{w}x{h}")
+            window.config(highlightbackground="#000000")
+            lbVideo = tk.Label(window, bg="white")
+            lbVideo.pack()
+            while True:
+                self._play_video(streamCap, lbVideo, original, scale)
+                window.update()
+                await asyncio.sleep(0.01)
+        except Exception as exc:
+            if streamCap is not None and streamCap.isOpened():
+                streamCap.release()
 
     def stop_timelapse(self):
         self._should_stop = True
+        if self._cap is not None and self._cap.isOpened():
+            self._cap.release()
+        if self._writer is not None and not self._writer.closed:
+            self._writer.close()
+        if self._video_writer is not None and self._video_writer.isOpened():
+            self._video_writer.release()
+        cv2.destroyAllWindows()
