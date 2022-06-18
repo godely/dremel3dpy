@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+0.5.2 (2022-06-18)
+- Fix requirements
+
 0.5.1 (2022-06-18)
 - Adjust versioning of dependencies to be >=
 
