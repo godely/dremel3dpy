@@ -9,7 +9,7 @@ Published under the MIT license - See LICENSE file for more details.
 
 This library supports the three Dremel models: 3D20, 3D40 and 3D45.
 
-"Dremel" is a trademark owned by Dremel, see www.dremel.com for
+"Dremel" is a trademark owned by Bosch, see www.dremel.com for
 more information. I am in no way affiliated with Dremel.
 """
 

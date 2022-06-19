@@ -9,9 +9,9 @@ _LOGGER = logging.getLogger(__name__)
 
 MAJOR_VERSION = 0
 MINOR_VERSION = 5
-PATCH_VERSION = "3"
+PATCH_VERSION = "4"
 
-__version__ = "{}.{}.{}".format(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION)
+__version__ = f"{MAJOR_VERSION}.{MINOR_VERSION}.{PATCH_VERSION}"
 
 PROJECT_NAME = "dremel3dpy"
 PROJECT_PACKAGE_NAME = "dremel3dpy"
