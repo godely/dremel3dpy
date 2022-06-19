@@ -409,7 +409,7 @@ class Dremel3DPrinter:
             ]
         )
 
-    def _upload_print(self: str, file: str) -> tuple[str, Dict[str, str]]:
+    def _upload_print(self: str, file: str) -> str:
         try:
             filename = (
                 "".join(random.choice(string.ascii_letters) for i in range(10))
@@ -450,7 +450,7 @@ class Dremel3DPrinter:
             STATS_SOFTWARE: software,
         }
 
-    def start_print_from_file(self, filepath: str) -> tuple[str, Dict[str, str]]:
+    def start_print_from_file(self, filepath: str) -> Dict[str, str]:
         """
         Uploads a file to the printer, so it can start a print job. This file is local.
         """
@@ -472,7 +472,7 @@ class Dremel3DPrinter:
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
 
-    def start_print_from_url(self, url: str) -> tuple[str, Dict[str, str]]:
+    def start_print_from_url(self, url: str) -> Dict[str, str]:
         """
         Uploads a file to the printer, so it can start a print job. This file is fetched from an URL.
         """

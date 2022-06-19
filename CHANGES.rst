@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+0.5.6 (2022-06-18)
+- Remove tuple type from API return types
+
 0.5.5 (2022-06-18)
 - Change dict to Dict in API return types
 
