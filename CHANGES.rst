@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+0.5.5 (2022-06-18)
+- Change dict to Dict in API return types
+
 0.5.4 (2022-06-18)
 - Loosen requirements versioning [2]
 

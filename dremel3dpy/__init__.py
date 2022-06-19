@@ -19,7 +19,7 @@ import os
 import random
 import re
 import string
-from typing import Any
+from typing import Any, Dict
 
 import requests
 import validators
@@ -119,7 +119,7 @@ class Dremel3DPrinter:
                     model = re.search(
                         r"DREMEL ([^\s+]+)", printer_info[CONF_MACHINE_TYPE]
                     ).group(1)
-                except Exception:
+                except Exception:  # pylint: disable=try-except-raise
                     raise
                 self._printer_info = {
                     CONF_HOST: self._host,
@@ -216,9 +216,8 @@ class Dremel3DPrinter:
                         and current_printing_status == "completed"
                     ):
                         self._is_finished = True
-                    _LOGGER.info(
-                        f"Printer changed its phase from {last_printing_status} to {current_printing_status}."
-                    )
+                    info_msg = "Printer changed its phase from {last_printing_status} to {current_printing_status}."
+                    _LOGGER.info(info_msg)
                     last_printing_status = current_printing_status
             # Patch fix the total time. Sometimes when in a printing job this API can
             # keep returning a total time of 0 but an actual estimated remaining time.
@@ -275,10 +274,10 @@ class Dremel3DPrinter:
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
 
-    def get_printer_info(self) -> dict[str, Any]:
+    def get_printer_info(self) -> Dict[str, Any]:
         return (self._printer_info or {}) | (self._printer_extra_stats or {})
 
-    def get_job_status(self) -> dict[str, Any]:
+    def get_job_status(self) -> Dict[str, Any]:
         return self._job_status
 
     def get_manufacturer(self) -> str:
@@ -387,7 +386,7 @@ class Dremel3DPrinter:
     def get_temperature_type(self, temp_type: str) -> int:
         return self.get_job_status().get(f"{temp_type}_temperature")
 
-    def get_temperature_attributes(self, temp_type: str) -> dict[str, int]:
+    def get_temperature_attributes(self, temp_type: str) -> Dict[str, int]:
         return {
             "target_temp": self.get_job_status().get(f"{temp_type}_target_temperature"),
             "max_temp": int(
@@ -410,7 +409,7 @@ class Dremel3DPrinter:
             ]
         )
 
-    def _upload_print(self: str, file: str) -> tuple[str, dict[str, str]]:
+    def _upload_print(self: str, file: str) -> tuple[str, Dict[str, str]]:
         try:
             filename = (
                 "".join(random.choice(string.ascii_letters) for i in range(10))
@@ -428,7 +427,7 @@ class Dremel3DPrinter:
 
         return filename
 
-    def _get_print_stats(self, filename: str, data: str) -> dict[str, str]:
+    def _get_print_stats(self, filename: str, data: str) -> Dict[str, str]:
         filament_used = (
             f"{match.group(1)}m"
             if (match := re.search("Filament used: ([0-9.]+)", data)) is not None
@@ -451,7 +450,7 @@ class Dremel3DPrinter:
             STATS_SOFTWARE: software,
         }
 
-    def start_print_from_file(self, filepath: str) -> tuple[str, dict[str, str]]:
+    def start_print_from_file(self, filepath: str) -> tuple[str, Dict[str, str]]:
         """
         Uploads a file to the printer, so it can start a print job. This file is local.
         """
@@ -473,7 +472,7 @@ class Dremel3DPrinter:
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
 
-    def start_print_from_url(self, url: str) -> tuple[str, dict[str, str]]:
+    def start_print_from_url(self, url: str) -> tuple[str, Dict[str, str]]:
         """
         Uploads a file to the printer, so it can start a print job. This file is fetched from an URL.
         """
@@ -509,22 +508,22 @@ class Dremel3DPrinter:
         except RuntimeError as exc:
             _LOGGER.exception(str(exc))
 
-    def resume_print(self) -> dict[str, Any]:
+    def resume_print(self) -> Dict[str, Any]:
         """Resumes a print job."""
         return default_request(self._host, RESUME_COMMAND)[ERROR_CODE] == 200
 
-    def pause_print(self) -> dict[str, Any]:
+    def pause_print(self) -> Dict[str, Any]:
         """Pauses a print job."""
         return default_request(self._host, PAUSE_COMMAND)[ERROR_CODE] == 200
 
-    def stop_print(self) -> dict[str, Any]:
+    def stop_print(self) -> Dict[str, Any]:
         """Stops a print job."""
         return default_request(self._host, CANCEL_COMMAND)[ERROR_CODE] == 200
 
 
 def default_request(
     host, command="", scheme="http", port=COMMAND_PORT, path=COMMAND_PATH
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """Performs a default request to the Dremel 3D Printer APIs."""
     url = URL.build(scheme=scheme, host=host, port=port, path=path)
 
