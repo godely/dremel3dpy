@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+1.0.0 (2022-06-20)
+- Remove OpenCV-Python dependency
+
 0.5.6 (2022-06-18)
 - Remove tuple type from API return types
 

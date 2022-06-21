@@ -7,9 +7,11 @@ import logging
 import os
 import signal
 import sys
+from io import BytesIO
 from time import sleep
 
 import imageio
+from PIL import Image
 
 from dremel3dpy import _LOGGER, Dremel3DPrinter
 from dremel3dpy.camera import Dremel3D45Timelapse
@@ -72,19 +74,13 @@ def parse_arguments():
     output_type_group = ap.add_mutually_exclusive_group()
     output_type_group.add_argument(
         "--gif",
-        help="Create a gif timelapse of the printing video. Only records while the printer is busy printing.",
-        action="store_true",
-        default=False,
-    )
-    output_type_group.add_argument(
-        "--record",
-        help="Whether to record a video from your printer camera while the script is running.",
+        help="Create a gif timelapse of the printing job. Only records while the printer is busy printing.",
         action="store_true",
         default=False,
     )
     output_type_group.add_argument(
         "--snapshot",
-        help="Takes a snapshot of the current video image and saves it to the output file.",
+        help="Takes a snapshot of the camera and saves it to the output file.",
         action="store_true",
         default=False,
     )
@@ -104,7 +100,7 @@ def parse_arguments():
     )
     runtime_group.add_argument(
         "--idle",
-        help="Keep recording or creating the gif even if the printer is idle.",
+        help="Keeps creating the gif even if the printer is idle.",
         action="store_true",
         default=False,
     )
@@ -112,12 +108,12 @@ def parse_arguments():
     timelapse_group = ap.add_mutually_exclusive_group()
     timelapse_group.add_argument(
         "--duration",
-        help="Duration in seconds of your final media. Regardless of this duration, the media will capture the entire printing job. So for instance if it takes 1 hour to print a file and your --duration is 10 seconds, your final gif or video will have a timelapse of 10 seconds showing the entire printing job.",
+        help="Duration in seconds of your final media. Regardless of this duration, the media will capture the entire printing job. So for instance if it takes 1 hour to print a file and your --duration is 10 seconds, your final gif will have a timelapse of 10 seconds showing the entire printing job.",
         type=int,
     )
     timelapse_group.add_argument(
         "--length",
-        help="How many seconds you want to record a given gif or video. Your final media will have --length amount of seconds, with --fps frames per second, but the timelapse will be of --length seconds of video. If you want to have a media output with a given duration but have it record the entire timelapse of the printing job, use the option --duration instead.",
+        help="How many seconds you want to record a given gif. Your final media will have --length amount of seconds, with --fps frames per second, but the timelapse will have --length seconds. If you want to have a media output with a given duration but have it record the entire timelapse of the printing job, use the option --duration instead.",
         type=int,
     )
     timelapse_group.add_argument(
@@ -130,12 +126,12 @@ def parse_arguments():
     media_group = ap.add_argument_group()
     media_group.add_argument(
         "--output",
-        help="Output path to save the timelapse gif or recording video.",
+        help="Output path to save the timelapse gif.",
         type=str,
     )
     media_group.add_argument(
         "--max-output-size",
-        help="Maximum size in MB of the output gif or video.",
+        help="Maximum size in MB of the output gif.",
         type=float,
         default=DEFAULT_MAX_SIZE_MB,
     )
@@ -160,10 +156,8 @@ def parse_arguments():
 
     args = ap.parse_args()
 
-    if (args.gif or args.record or args.snapshot) and args.output is None:
-        ap.error(
-            "When --gif, --record or --snapshot are defined, you must also define --output."
-        )
+    if (args.gif or args.snapshot) and args.output is None:
+        ap.error("When --gif or --snapshot are defined, you must also define --output.")
     if not args.print and (args.filepath is not None or args.url is not None):
         ap.error("--filepath or --url are arguments used together with --print.")
     if args.print and args.filepath is None and args.url is None:
@@ -234,40 +228,14 @@ async def make_gif(
     )
 
 
-async def make_record(
-    camera,
-    output,
-    fps,
-    max_output_size,
-    duration,
-    length,
-    idle,
-    original,
-    scale,
-    silent,
-):
-    return await camera.start_record(
-        output,
-        fps,
-        max_output_size,
-        duration,
-        length,
-        idle,
-        original,
-        scale,
-        silent or idle,
-    )
-
-
 async def make_stream(camera, original, scale):
     return await camera.start_stream(original, scale)
 
 
 def make_snapshot(camera, output, original, scale):
-    _, extension = os.path.splitext(output)
-    _, image = camera.get_snapshot_img(original, scale, extension)
-    if image is not None:
-        imageio.imwrite(output, image, format=extension)
+    snapshot = camera.get_snapshot_as_ndarray(original, scale)
+    image = Image.fromarray(snapshot)
+    image.save(output)
 
 
 async def main():
@@ -304,71 +272,53 @@ async def main():
                 dumps = json.dumps(dremel.start_print_from_url(args.url), indent=2)
                 print(dumps)
 
-        if args.gif or args.stream or args.record or args.snapshot:
+        if args.gif or args.stream or args.snapshot:
             if dremel.get_model() != "3D45":
                 raise RuntimeError(
-                    "Sorry, you can only use media resources such as creating gif, stream, recording or taking a snapshot with the 3D45 model, which has an embedded camera."
+                    "Sorry, you can only use media resources such as creating gif, streaming or taking a snapshot with the 3D45 model, which has an embedded camera."
                 )
             camera = Dremel3D45Timelapse(dremel, loop)
             group = []
-            if args.snapshot:
-                make_snapshot(camera, args.output, args.original, args.scale)
-                camera.stop_timelapse()
-            else:
-                loop.set_exception_handler(lambda s, c: exception_handler(camera))
-                add_signals_to_loop(camera)
-                if args.gif:
-                    group += [
-                        asyncio.wait_for(
-                            make_gif(
+            try:
+                if args.snapshot:
+                    make_snapshot(camera, args.output, args.original, args.scale)
+                    camera.stop_timelapse()
+                else:
+                    loop.set_exception_handler(lambda s, c: exception_handler(camera))
+                    add_signals_to_loop(camera)
+                    if args.gif:
+                        group += [
+                            asyncio.wait_for(
+                                make_gif(
+                                    camera,
+                                    args.output,
+                                    args.fps,
+                                    args.max_output_size,
+                                    args.duration,
+                                    args.length,
+                                    args.idle,
+                                    args.original,
+                                    args.scale,
+                                    args.silent,
+                                ),
+                                args.runtime,
+                            )
+                        ]
+                    if args.stream:
+                        group += [
+                            make_stream(
                                 camera,
-                                args.output,
-                                args.fps,
-                                args.max_output_size,
-                                args.duration,
-                                args.length,
-                                args.idle,
                                 args.original,
                                 args.scale,
-                                args.silent,
-                            ),
-                            args.runtime,
-                        )
-                    ]
-                elif args.record:
-                    group += [
-                        asyncio.wait_for(
-                            make_record(
-                                camera,
-                                args.output,
-                                args.fps,
-                                args.max_output_size,
-                                args.duration,
-                                args.length,
-                                args.idle,
-                                args.original,
-                                args.scale,
-                                args.silent,
-                            ),
-                            args.runtime,
-                        )
-                    ]
-                if args.stream:
-                    group += [
-                        make_stream(
-                            camera,
-                            args.original,
-                            args.scale,
-                        )
-                    ]
-                try:
+                            )
+                        ]
                     await asyncio.gather(*group)
-                except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
-                    _LOGGER.exception("Execution interrupted.")
-                except Exception:
-                    _LOGGER.exception("Unexpected exception")
-                finally:
-                    graceful_shutdown(camera)
+            except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
+                _LOGGER.exception("Execution interrupted.")
+            except Exception:
+                _LOGGER.exception("Unexpected exception")
+            finally:
+                graceful_shutdown(camera)
 
 
 loop = asyncio.get_event_loop()

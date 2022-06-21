@@ -1,21 +1,13 @@
 import asyncio
 import datetime
-import functools
-import io
-import math
 import os
-import queue
-import threading
 import tkinter as tk
-from math import floor
-from platform import platform
+from io import BytesIO
 
-import cv2
 import imageio.v2 as imageio
-import imutils
 import numpy as np
 import requests
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 from dremel3dpy import _LOGGER, Dremel3DPrinter
@@ -24,18 +16,7 @@ from dremel3dpy.helpers.constants import (
     DEFAULT_FINAL_GRACE_PERIOD,
     DEFAULT_INITIAL_PREPARING_PERIOD,
     DEFAULT_MAX_SIZE_MB,
-    DEFAULT_UPDATE_JOB_STATUS_INTERVAL,
-    FRAME_RECTANGLE_COLOR,
     FRAME_RECTANGLE_MARGIN,
-    FRAME_RECTANGLE_OPACITY,
-    FRAME_RECTANGLE_PADDING,
-    FRAME_SCALING_FACTOR,
-    FRAME_TEXT_COLOR,
-    FRAME_TEXT_FONT_FACE,
-    FRAME_TEXT_FONT_SCALE,
-    FRAME_TEXT_LINE_TYPE,
-    FRAME_TEXT_THICKNESS,
-    FRAME_TEXT_VERTICAL_PADDING,
 )
 from dremel3dpy.helpers.timer import TaskTimer
 
@@ -51,20 +32,6 @@ class Dremel3D45Timelapse:
         self._max_output_size = None
         self._printing_progress_bar = None
         self._loop = loop
-        self._cap = cv2.VideoCapture(self._printer.get_stream_url())
-        self._cap_queue = queue.Queue()
-
-    def _consume_cap_buffer(self):
-        while self._should_continue():
-            ret, frame = self._cap.read()
-            if not ret:
-                continue
-            if not self._cap_queue.empty():
-                try:
-                    self._cap_queue.get_nowait()  # discard previous (unprocessed) frame
-                except queue.Empty:
-                    pass
-            self._cap_queue.put(frame)
 
     def _get_progress_status(self):
         return (
@@ -95,201 +62,56 @@ class Dremel3D45Timelapse:
         else:
             return "%ds" % (seconds,)
 
-    def get_snapshot_as_ndarray(self, original, scale=FRAME_SCALING_FACTOR):
-        frame = self._cap_queue.get()
-        return self.get_snapshot_as_ndarray_from_frame(frame, original, scale)
-
-    def get_snapshot_as_ndarray_from_frame(self, frame, original, scale):
-        (h, w, _) = frame.shape
-        frame = cv2.resize(
-            frame,
-            (int(w * scale), int(h * scale)),
-            fx=0,
-            fy=0,
-            interpolation=cv2.INTER_LINEAR,
-        )
+    def get_snapshot_as_ndarray(self, original, scale):
+        snapshot = requests.get("http://192.168.0.60:10123/?action=snapshot")
+        bytes_jpgdata = BytesIO(snapshot.content)
+        image = Image.open(bytes_jpgdata)
+        (w, h) = image.size
+        image = image.resize((int(w * scale), int(h * scale)))
         if original:
-            return frame
-
-        overlay = np.copy(frame)
-
-        # Sensors Box
-        resource_statuses = self._get_resource_status()
-        text_dimensions = list(
-            map(
-                lambda line: cv2.getTextSize(
-                    text=line,
-                    fontFace=FRAME_TEXT_FONT_FACE,
-                    fontScale=FRAME_TEXT_FONT_SCALE,
-                    thickness=FRAME_TEXT_THICKNESS,
-                )[0],
-                resource_statuses,
-            )
-        )
-
-        min_rectangle_width = functools.reduce(
-            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
-        )
-        min_rectangle_height = functools.reduce(
-            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
-        )
-        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
-        rectangle_h = (
-            min_rectangle_height
-            + FRAME_RECTANGLE_PADDING * 2
-            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
-        )
-        h, _, _ = frame.shape
-        origin_x, origin_y = (
-            FRAME_RECTANGLE_MARGIN,
-            FRAME_RECTANGLE_MARGIN,
-        )
-
-        cv2.rectangle(
-            img=overlay,
-            pt1=(origin_x, origin_y),
-            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
-            color=FRAME_RECTANGLE_COLOR,
-            thickness=-1,
-        )
-
-        acc_text_height = 0
-        for i, line in enumerate(resource_statuses):
-            text_height = text_dimensions[i][1]
-            cv2.putText(
-                img=overlay,
-                text=line,
-                org=(
-                    int(origin_x + FRAME_RECTANGLE_PADDING),
-                    int(
-                        acc_text_height
-                        + origin_y
-                        + FRAME_RECTANGLE_PADDING
-                        + text_height
-                    ),
-                ),
-                fontFace=FRAME_TEXT_FONT_FACE,
-                fontScale=FRAME_TEXT_FONT_SCALE,
-                color=FRAME_TEXT_COLOR,
-                thickness=FRAME_TEXT_THICKNESS,
-                lineType=FRAME_TEXT_LINE_TYPE,
-            )
-            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
-
-        # Progress Box
-        progress_statuses = self._get_progress_status()
-        text_dimensions = list(
-            map(
-                lambda line: cv2.getTextSize(
-                    text=line,
-                    fontFace=FRAME_TEXT_FONT_FACE,
-                    fontScale=FRAME_TEXT_FONT_SCALE,
-                    thickness=FRAME_TEXT_THICKNESS,
-                )[0],
-                progress_statuses,
-            )
-        )
-
-        min_rectangle_width = functools.reduce(
-            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
-        )
-        min_rectangle_height = functools.reduce(
-            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
-        )
-        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
-        rectangle_h = (
-            min_rectangle_height
-            + FRAME_RECTANGLE_PADDING * 2
-            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
-        )
-        h, _, _ = frame.shape
-        origin_x, origin_y = (
-            FRAME_RECTANGLE_MARGIN,
-            h - rectangle_h - FRAME_RECTANGLE_MARGIN,
-        )
-
-        cv2.rectangle(
-            img=overlay,
-            pt1=(origin_x, origin_y),
-            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
-            color=FRAME_RECTANGLE_COLOR,
-            thickness=-1,
-        )
-
-        acc_text_height = 0
-        for i, line in enumerate(progress_statuses):
-            text_height = text_dimensions[i][1]
-            cv2.putText(
-                img=overlay,
-                text=line,
-                org=(
-                    int(origin_x + FRAME_RECTANGLE_PADDING),
-                    int(
-                        acc_text_height
-                        + origin_y
-                        + FRAME_RECTANGLE_PADDING
-                        + text_height
-                    ),
-                ),
-                fontFace=FRAME_TEXT_FONT_FACE,
-                fontScale=FRAME_TEXT_FONT_SCALE,
-                color=FRAME_TEXT_COLOR,
-                thickness=FRAME_TEXT_THICKNESS,
-                lineType=FRAME_TEXT_LINE_TYPE,
-            )
-            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
+            return np.asarray(image)
 
         # Progress Bar
         PROGRESS_BAR_HEIGHT = 5
         origin_x, origin_y = (
-            rectangle_w + 2 * FRAME_RECTANGLE_MARGIN,
+            FRAME_RECTANGLE_MARGIN,
             h - FRAME_RECTANGLE_MARGIN - PROGRESS_BAR_HEIGHT,
         )
         rectangle_w = w - origin_x - FRAME_RECTANGLE_MARGIN
         rectangle_h = PROGRESS_BAR_HEIGHT
-        cv2.rectangle(
-            img=overlay,
-            pt1=(origin_x, origin_y),
-            pt2=(origin_x + rectangle_w, origin_y + rectangle_h),
-            color=(255, 255, 255),
-            thickness=-1,
+
+        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)  # Create a context for drawing things on it.
+        draw.rectangle(
+            [(origin_x, origin_y), (origin_x + rectangle_w, origin_y + rectangle_h)],
+            fill=(255, 255, 255, 128),
         )
-
-        cv2.rectangle(
-            img=overlay,
-            pt1=(origin_x, origin_y),
-            pt2=(
-                origin_x
-                + round(rectangle_w * self._printer.get_printing_progress() / 100.0),
-                origin_y + rectangle_h,
-            ),
-            color=(0, 127, 0),
-            thickness=-1,
+        draw.rectangle(
+            [
+                (origin_x, origin_y),
+                (
+                    origin_x
+                    + round(
+                        rectangle_w * self._printer.get_printing_progress() / 100.0
+                    ),
+                    origin_y + rectangle_h,
+                ),
+            ],
+            fill=(0, 127, 0, 128),
         )
-
-        alpha = FRAME_RECTANGLE_OPACITY
-        overlay = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
-
-        return overlay
+        image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+        return np.asarray(image)
 
     def _append_to_gif(self, writer, original, scale):
         if self._should_continue():
-            _, img = self.get_snapshot_img(original, scale)
+            img = self.get_snapshot_as_ndarray(original, scale)
             if img is not None:
                 writer.append_data(img)
-
-    def _append_to_video(self, writer, original, scale):
-        if self._should_continue():
-            frame = self.get_snapshot_as_ndarray(original, scale)
-            if frame is not None:
-                writer.write(frame)
 
     # Add check for printer offline
     def _should_continue(self):
         if not (
             self._loop.is_running()
-            and self._cap is not None
-            and self._cap.isOpened()
             and (
                 (self._writer is not None and not self._writer.closed)
                 or (self._video_writer is not None and self._video_writer.isOpened())
@@ -419,21 +241,6 @@ class Dremel3D45Timelapse:
             return True
 
         return _inner_wait_start_printing
-
-    def get_snapshot_img(self, original, scale, ext=".jpg"):
-        snapshot = self.get_snapshot_as_ndarray(original, scale=scale)
-        if snapshot is not None and np.size(snapshot) > 0:
-            try:
-                image_bytes = cv2.imencode(ext, snapshot)[1].tobytes()
-            except Exception as exc:
-                _LOGGER.exception(
-                    f"Could not find encoder for the specified extension {ext}."
-                )
-                raise exc
-            buffer = io.BytesIO(image_bytes)
-            return snapshot, imageio.imread(buffer)
-        else:
-            return None, None
 
     def _update_printing_progress_bar(self, silent):
         if self._printing_progress_bar is not None:
@@ -837,10 +644,6 @@ class Dremel3D45Timelapse:
             self._append_to_gif(temp_writer, original, scale)
             temp_writer.close()
 
-        t = threading.Thread(target=self._consume_cap_buffer)
-        t.daemon = True
-        t.start()
-
         fps, duration, length = self._start_media_record(
             output_path, fps, duration, length, write_and_close_fn
         )
@@ -861,82 +664,18 @@ class Dremel3D45Timelapse:
             return (0, 0)
         return frame.shape[:2]
 
-    async def start_record(
-        self,
-        output_path,
-        fps,
-        max_output_size,
-        duration,
-        length,
-        idle,
-        original,
-        scale,
-        silent,
-    ):
-        _LOGGER.info(f"Starting a video recording to {output_path}.")
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
-        (oh, ow) = self._get_scaled_dimensions(1)
-        (h, w) = self._get_scaled_dimensions(scale)
-        if oh != h or ow != w:
-            _LOGGER.info(
-                "Frame dimensions changed from ({ow},{oh}) to ({w},{h}), scaled by {scale}."
-            )
-        self._video_writer = cv2.VideoWriter(
-            output_path,
-            cv2.VideoWriter_fourcc("M", "J", "P", "G"),
-            fps,
-            (w, h),
-        )
-        self._output_file = output_path
-        self._max_output_size = max_output_size * 1024.0 * 1024.0
-        self._should_stop = False
-
-        def write_and_close_fn(temp_file):
-            temp_writer = cv2.VideoWriter(
-                temp_file,
-                cv2.VideoWriter_fourcc("M", "J", "P", "G"),
-                fps,
-                (w, h),
-            )
-            self._append_to_video(temp_writer, original, scale)
-            temp_writer.release()
-
-        t = threading.Thread(target=self._consume_cap_buffer)
-        t.daemon = True
-        t.start()
-
-        fps, duration, length = self._start_media_record(
-            output_path, fps, duration, length, write_and_close_fn
-        )
-
-        await self.gen_media_file(
-            output_path,
-            fps,
-            duration,
-            length,
-            idle,
-            silent,
-            lambda: self._append_to_video(self._video_writer, original, scale),
-        )
-
-    def _play_video(self, streamCap, lbVideo, original, scale):
+    def _play_video(self, lbVideo, original, scale):
         self._printer.set_job_status(refresh=True)
         original_canvas = original and self._printer.is_running()
-        _, frame = streamCap.read()
-        snapshot = self.get_snapshot_as_ndarray_from_frame(
-            frame, original_canvas, scale
-        )
-        cv2image = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGBA)
-        fromarray = Image.fromarray(cv2image)
-        imgtk = ImageTk.PhotoImage(image=fromarray)
-        lbVideo.imgtk = imgtk
-        lbVideo.configure(image=imgtk)
+        snapshot = self.get_snapshot_as_ndarray(original_canvas, scale)
+        # cv2image = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGBA)
+        # fromarray = Image.fromarray(cv2image)
+        # imgtk = ImageTk.PhotoImage(image=fromarray)
+        # lbVideo.imgtk = imgtk
+        # lbVideo.configure(image=imgtk)
 
     async def start_stream(self, original, scale):
         try:
-            streamCap = cv2.VideoCapture(self._printer.get_stream_url())
             window = tk.Tk(className="3D45 Stream")
             window.resizable(width=False, height=False)
             (h, w) = self._get_scaled_dimensions(scale)
@@ -945,19 +684,15 @@ class Dremel3D45Timelapse:
             lbVideo = tk.Label(window, bg="white")
             lbVideo.pack()
             while True:
-                self._play_video(streamCap, lbVideo, original, scale)
+                self._play_video(lbVideo, original, scale)
                 window.update()
                 await asyncio.sleep(0.01)
         except Exception as exc:
-            if streamCap is not None and streamCap.isOpened():
-                streamCap.release()
+            pass
 
     def stop_timelapse(self):
         self._should_stop = True
-        if self._cap is not None and self._cap.isOpened():
-            self._cap.release()
         if self._writer is not None and not self._writer.closed:
             self._writer.close()
         if self._video_writer is not None and self._video_writer.isOpened():
             self._video_writer.release()
-        cv2.destroyAllWindows()
