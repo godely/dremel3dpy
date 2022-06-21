@@ -36,7 +36,6 @@ setup(
         "decorator>=5.0",
         "imageio>=2.0",
         "imutils>=0.0",
-        "opencv-python>=4.0",
         "requests>=2.0",
         "tqdm>=4.0",
         "validators>=0.0",

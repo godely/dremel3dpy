@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+1.0.1 (2022-06-20)
+- Remove OpenCV-Python dependency from setup.py
+
 1.0.0 (2022-06-20)
 - Remove OpenCV-Python dependency
 
