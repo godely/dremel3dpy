@@ -13,9 +13,10 @@ from time import sleep
 import imageio
 from PIL import Image
 
-from dremel3dpy import _LOGGER, Dremel3DPrinter
+from dremel3dpy import Dremel3DPrinter
 from dremel3dpy.camera import Dremel3D45Timelapse
 from dremel3dpy.helpers.constants import (
+    _LOGGER,
     DEFAULT_FINAL_GRACE_PERIOD,
     DEFAULT_FPS,
     DEFAULT_MAX_SIZE_MB,

@@ -13,6 +13,7 @@ This library supports the three Dremel models: 3D20, 3D40 and 3D45.
 more information. I am in no way affiliated with Dremel.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -23,10 +24,12 @@ from typing import Any, Dict
 
 import requests
 import validators
+from numpy import ndarray
 from urllib3.exceptions import InsecureRequestWarning
 from yarl import URL
 
-from dremel3dpy.helpers.constants import (
+from .helpers.constants import (
+    _LOGGER,
     AVAILABLE_STORAGE,
     CAMERA_PORT,
     CANCEL_COMMAND,
@@ -79,8 +82,6 @@ from dremel3dpy.helpers.constants import (
     STATUS,
     USAGE_COUNTER,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class Dremel3DPrinter:
@@ -150,6 +151,9 @@ class Dremel3DPrinter:
                     else "idle"
                 )
                 job_status = default_request(self._host, PRINTER_STATUS_COMMAND)
+                job_name = re.search(
+                    r"(.*?)(\.gcode)?$", job_status[JOB_NAME[0]]
+                ).group(1)
             except RuntimeError as exc:
                 self._job_status = None
                 raise exc
@@ -167,7 +171,7 @@ class Dremel3DPrinter:
                     FAN_SPEED[1]: job_status[FAN_SPEED[0]],
                     FILAMENT[1]: job_status[FILAMENT[0]],
                     JOB_STATUS[1]: job_status[JOB_STATUS[0]],
-                    JOB_NAME[1]: job_status[JOB_NAME[0]],
+                    JOB_NAME[1]: job_name,
                     NETWORK_BUILD[1]: job_status[NETWORK_BUILD[0]],
                     PLATFORM_TARGET_TEMPERATURE[1]: job_status[
                         PLATFORM_TARGET_TEMPERATURE[0]
@@ -292,6 +296,9 @@ class Dremel3DPrinter:
     def get_firmware_version(self) -> str:
         return self.get_printer_info().get(CONF_FIRMWARE_VERSION)
 
+    def get_job_name(self) -> str:
+        return self.get_job_status().get(JOB_NAME[1])
+
     def get_remaining_time(self) -> int:
         return self.get_job_status().get(REMAINING_TIME[1])
 
@@ -394,7 +401,7 @@ class Dremel3DPrinter:
             ),
         }
 
-    def is_maybe_temperature_within_target_range(self, temp_type):
+    def is_maybe_temperature_within_target_range(self, temp_type) -> bool:
         temperature = self.get_temperature_type(temp_type)
         target_temperature = self.get_temperature_attributes(temp_type)["target_temp"]
         if target_temperature == 0:

@@ -4,7 +4,6 @@ import math
 
 from dremel3dpy.helpers.constants import (
     DEFAULT_UPDATE_JOB_STATUS_INTERVAL,
-    REFRESH_API_INTERVAL,
     REFRESH_SLEEP_SECONDS,
 )
 

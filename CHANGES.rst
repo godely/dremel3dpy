@@ -3,6 +3,11 @@ Changelog
 
 A list of changes between each release.
 
+1.1.0 (2022-06-26)
+- Add get_job_name function that strips out the .gcode extension from the name
+- Rename manufacturer to Dremel
+- Add default values for original and scale attributes on get_snapshot_as_ndarray
+
 1.0.1 (2022-06-20)
 - Remove OpenCV-Python dependency from setup.py
 

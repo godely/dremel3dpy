@@ -10,15 +10,16 @@ import requests
 from PIL import Image, ImageDraw
 from tqdm import tqdm
 
-from dremel3dpy import _LOGGER, Dremel3DPrinter
-from dremel3dpy.helpers.constants import (
+from . import Dremel3DPrinter
+from .helpers.constants import (
+    _LOGGER,
     DEFAULT_ADDITIONAL_OUTPUT_SIZE_PERCENTAGE,
     DEFAULT_FINAL_GRACE_PERIOD,
     DEFAULT_INITIAL_PREPARING_PERIOD,
     DEFAULT_MAX_SIZE_MB,
     FRAME_RECTANGLE_MARGIN,
 )
-from dremel3dpy.helpers.timer import TaskTimer
+from .helpers.timer import TaskTimer
 
 
 class Dremel3D45Timelapse:
@@ -62,12 +63,13 @@ class Dremel3D45Timelapse:
         else:
             return "%ds" % (seconds,)
 
-    def get_snapshot_as_ndarray(self, original, scale):
+    def get_snapshot_as_ndarray(self, original=True, scale=1.0):
         snapshot = requests.get("http://192.168.0.60:10123/?action=snapshot")
         bytes_jpgdata = BytesIO(snapshot.content)
         image = Image.open(bytes_jpgdata)
         (w, h) = image.size
-        image = image.resize((int(w * scale), int(h * scale)))
+        if scale != 1.0:
+            image = image.resize((int(w * scale), int(h * scale)))
         if original:
             return np.asarray(image)
 
