@@ -3,6 +3,12 @@ Changelog
 
 A list of changes between each release.
 
+2.0.0 (2022-06-27)
+- Remove streaming functionality, which depended on tkinter library.
+
+1.1.1 (2022-06-26)
+- Just upgrade version for testing purposes
+
 1.1.0 (2022-06-26)
 - Add get_job_name function that strips out the .gcode extension from the name
 - Rename manufacturer to Dremel

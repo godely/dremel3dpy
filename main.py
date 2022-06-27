@@ -17,11 +17,9 @@ from dremel3dpy import Dremel3DPrinter
 from dremel3dpy.camera import Dremel3D45Timelapse
 from dremel3dpy.helpers.constants import (
     _LOGGER,
-    DEFAULT_FINAL_GRACE_PERIOD,
     DEFAULT_FPS,
     DEFAULT_MAX_SIZE_MB,
     DEFAULT_SCALE_PERCENT,
-    DEFAULT_TOTAL_DURATION,
     EXIT_SIGNALS,
 )
 
@@ -94,12 +92,6 @@ def parse_arguments():
         default=False,
     )
     runtime_group.add_argument(
-        "--stream",
-        help="Shows a live stream of the 3D printer.",
-        action="store_true",
-        default=False,
-    )
-    runtime_group.add_argument(
         "--idle",
         help="Keeps creating the gif even if the printer is idle.",
         action="store_true",
@@ -163,10 +155,6 @@ def parse_arguments():
         ap.error("--filepath or --url are arguments used together with --print.")
     if args.print and args.filepath is None and args.url is None:
         ap.error("--print requires either --filepath or --url to be defined.")
-    if args.stream and args.snapshot:
-        ap.error(
-            "--snapshot is an atomic command that takes a snapshot and stops the script, so you cannot stream."
-        )
     if args.idle:
         # Force silent to be True if running on idle mode
         args.silent = True
@@ -196,7 +184,7 @@ def exception_handler(camera):
 
 def add_signals_to_loop(camera):
     for s in EXIT_SIGNALS:
-        loop.add_signal_handler(s, lambda s=s: shutdown_with_signal(camera, signal))
+        loop.add_signal_handler(s, lambda s=s: shutdown_with_signal(camera, s))
 
 
 def remove_signals_to_loop():
@@ -227,10 +215,6 @@ async def make_gif(
         scale,
         silent or idle,
     )
-
-
-async def make_stream(camera, original, scale):
-    return await camera.start_stream(original, scale)
 
 
 def make_snapshot(camera, output, original, scale):
@@ -273,10 +257,10 @@ async def main():
                 dumps = json.dumps(dremel.start_print_from_url(args.url), indent=2)
                 print(dumps)
 
-        if args.gif or args.stream or args.snapshot:
+        if args.gif or args.snapshot:
             if dremel.get_model() != "3D45":
                 raise RuntimeError(
-                    "Sorry, you can only use media resources such as creating gif, streaming or taking a snapshot with the 3D45 model, which has an embedded camera."
+                    "You can only use media resources such as creating gif or taking a snapshot with the 3D45 model, which has an embedded camera."
                 )
             camera = Dremel3D45Timelapse(dremel, loop)
             group = []
@@ -284,40 +268,31 @@ async def main():
                 if args.snapshot:
                     make_snapshot(camera, args.output, args.original, args.scale)
                     camera.stop_timelapse()
-                else:
+                elif args.gif:
                     loop.set_exception_handler(lambda s, c: exception_handler(camera))
                     add_signals_to_loop(camera)
-                    if args.gif:
-                        group += [
-                            asyncio.wait_for(
-                                make_gif(
-                                    camera,
-                                    args.output,
-                                    args.fps,
-                                    args.max_output_size,
-                                    args.duration,
-                                    args.length,
-                                    args.idle,
-                                    args.original,
-                                    args.scale,
-                                    args.silent,
-                                ),
-                                args.runtime,
-                            )
-                        ]
-                    if args.stream:
-                        group += [
-                            make_stream(
+                    group += [
+                        asyncio.wait_for(
+                            make_gif(
                                 camera,
+                                args.output,
+                                args.fps,
+                                args.max_output_size,
+                                args.duration,
+                                args.length,
+                                args.idle,
                                 args.original,
                                 args.scale,
-                            )
-                        ]
+                                args.silent,
+                            ),
+                            args.runtime,
+                        )
+                    ]
                     await asyncio.gather(*group)
             except (KeyboardInterrupt, asyncio.exceptions.CancelledError):
                 _LOGGER.exception("Execution interrupted.")
             except Exception:
-                _LOGGER.exception("Unexpected exception")
+                _LOGGER.exception("Unexpected exception.")
             finally:
                 graceful_shutdown(camera)
 

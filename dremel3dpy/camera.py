@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 import os
-import tkinter as tk
 from io import BytesIO
 
 import imageio.v2 as imageio
@@ -528,11 +527,10 @@ class Dremel3D45Timelapse:
                 _LOGGER.info("All done, feel free to enjoy your output gif or video!")
 
             end = datetime.datetime.now()
-            _LOGGER.info(f"Total timelapse creation time: {end - start}.")
+            _LOGGER.info("Total timelapse creation time: %s.", end - start)
             _LOGGER.info(
-                f"Total output file size: "
-                + "{:.2f}".format(os.path.getsize(output) / 1024.0 / 1024.0)
-                + "MB"
+                "Total output file size: %sMB",
+                "{:.2f}".format(os.path.getsize(output) / 1024.0 / 1024.0),
             )
         except asyncio.exceptions.CancelledError as exc:
             raise exc
@@ -550,16 +548,16 @@ class Dremel3D45Timelapse:
         filepath, filename = os.path.split(output_path)
         _, extension = os.path.splitext(output_path)
         _LOGGER.info(
-            f"Creating a temporary {extension} file to hold 1 single frame of the video capture in order to measure the expected size in bytes by frame."
+            "Creating a temporary %s file to hold 1 single frame of the video capture in order to measure the expected size in bytes by frame.",
+            extension,
         )
         hidden_temp_file = os.path.join(filepath, f".{filename}")
         write_and_close_fn(hidden_temp_file)
         bytes_per_frame = bytes_per_frame = os.path.getsize(hidden_temp_file)
         os.remove(hidden_temp_file)
         _LOGGER.info(
-            f"We estimate that each frame saved to your media will increase the final file size by "
-            + "{:.2f}".format(bytes_per_frame / 1024.0)
-            + "KB."
+            "We estimate that each frame saved to your media will increase the final file size by %sKB.",
+            "{:.2f}".format(bytes_per_frame / 1024.0),
         )
         max_output_bytes = self._max_output_size
         max_total_frames = max_output_bytes / bytes_per_frame
@@ -665,32 +663,6 @@ class Dremel3D45Timelapse:
         if frame is None:
             return (0, 0)
         return frame.shape[:2]
-
-    def _play_video(self, lbVideo, original, scale):
-        self._printer.set_job_status(refresh=True)
-        original_canvas = original and self._printer.is_running()
-        snapshot = self.get_snapshot_as_ndarray(original_canvas, scale)
-        # cv2image = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGBA)
-        # fromarray = Image.fromarray(cv2image)
-        # imgtk = ImageTk.PhotoImage(image=fromarray)
-        # lbVideo.imgtk = imgtk
-        # lbVideo.configure(image=imgtk)
-
-    async def start_stream(self, original, scale):
-        try:
-            window = tk.Tk(className="3D45 Stream")
-            window.resizable(width=False, height=False)
-            (h, w) = self._get_scaled_dimensions(scale)
-            window.geometry(f"{w}x{h}")
-            window.config(highlightbackground="#000000")
-            lbVideo = tk.Label(window, bg="white")
-            lbVideo.pack()
-            while True:
-                self._play_video(lbVideo, original, scale)
-                window.update()
-                await asyncio.sleep(0.01)
-        except Exception as exc:
-            pass
 
     def stop_timelapse(self):
         self._should_stop = True
