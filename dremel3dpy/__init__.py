@@ -152,12 +152,22 @@ class Dremel3DPrinter:
                 )
                 job_status = default_request(self._host, PRINTER_STATUS_COMMAND)
                 job_name = re.search(
-                    r"(.*?)(\.gcode)?$", job_status[JOB_NAME[0]]
+                    r"(.*?)(\.[^\.]*)?$", job_status[JOB_NAME[0]]
                 ).group(1)
             except RuntimeError as exc:
                 self._job_status = None
                 raise exc
             else:
+                mapped_status = {
+                    "": "idle",
+                    "abort": "abort",
+                    "building": "building",
+                    "completed": "completed",
+                    "pausing": "pausing",
+                    "preparing": "preparing",
+                    "!pausing": "paused",
+                    "!resuming": "resuming",
+                }
                 self._job_status = {
                     DOOR_OPEN[1]: job_status[DOOR_OPEN[0]],
                     CHAMBER_TEMPERATURE[1]: job_status[CHAMBER_TEMPERATURE[0]],
@@ -170,7 +180,9 @@ class Dremel3DPrinter:
                     ],
                     FAN_SPEED[1]: job_status[FAN_SPEED[0]],
                     FILAMENT[1]: job_status[FILAMENT[0]],
-                    JOB_STATUS[1]: job_status[JOB_STATUS[0]],
+                    JOB_STATUS[1]: mapped_status[job_status[JOB_STATUS[0]]]
+                    if job_status[JOB_STATUS[0]] in mapped_status
+                    else "unknown",
                     JOB_NAME[1]: job_name,
                     NETWORK_BUILD[1]: job_status[NETWORK_BUILD[0]],
                     PLATFORM_TARGET_TEMPERATURE[1]: job_status[
@@ -374,18 +386,7 @@ class Dremel3DPrinter:
         return self.get_printer_info().get(CONF_SERIAL_NUMBER)
 
     def get_printing_status(self) -> str:
-        job_status = self.get_job_status().get(JOB_STATUS[1])
-        mapped_status = {
-            "": "idle",
-            "abort": "abort",
-            "building": "building",
-            "completed": "completed",
-            "pausing": "pausing",
-            "preparing": "preparing",
-            "!pausing": "paused",
-            "!resuming": "resuming",
-        }
-        return mapped_status[job_status] if job_status in mapped_status else "unknown"
+        return self.get_job_status().get(JOB_STATUS[1])
 
     def get_printing_progress(self) -> float:
         return self.get_job_status().get(PROGRESS[1])

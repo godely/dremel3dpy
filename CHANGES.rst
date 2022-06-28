@@ -3,6 +3,11 @@ Changelog
 
 A list of changes between each release.
 
+2.0.1 (2022-06-27)
+- Fix job_status in get_job_status()
+- Strip out file extension from job_name
+- Call loop.stop() if command is not gif and not snapshot
+
 2.0.0 (2022-06-27)
 - Remove streaming functionality, which depended on tkinter library.
 

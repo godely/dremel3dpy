@@ -295,6 +295,8 @@ async def main():
                 _LOGGER.exception("Unexpected exception.")
             finally:
                 graceful_shutdown(camera)
+        else:
+            loop.stop()
 
 
 loop = asyncio.get_event_loop()
