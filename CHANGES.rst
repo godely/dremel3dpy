@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+2.1.1 (2022-06-28)
+- Add new resources to the distribution
+
 2.1.0 (2022-06-28)
 - Introduce status on the snapshot
 
