@@ -3,6 +3,9 @@ Changelog
 
 A list of changes between each release.
 
+2.1.0 (2022-06-28)
+- Introduce status on the snapshot
+
 2.0.1 (2022-06-27)
 - Fix job_status in get_job_status()
 - Strip out file extension from job_name

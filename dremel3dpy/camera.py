@@ -1,12 +1,13 @@
 import asyncio
 import datetime
+import functools
 import os
 from io import BytesIO
 
 import imageio.v2 as imageio
 import numpy as np
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
 from . import Dremel3DPrinter
@@ -17,6 +18,8 @@ from .helpers.constants import (
     DEFAULT_INITIAL_PREPARING_PERIOD,
     DEFAULT_MAX_SIZE_MB,
     FRAME_RECTANGLE_MARGIN,
+    FRAME_RECTANGLE_PADDING,
+    FRAME_TEXT_VERTICAL_PADDING,
 )
 from .helpers.timer import TaskTimer
 
@@ -43,9 +46,9 @@ class Dremel3D45Timelapse:
 
     def _get_resource_status(self):
         return (
-            f"Model: {self._printer.get_title()}",
-            f"Platform: {self._printer.get_temperature_type('platform')}C",
-            f"Extruder: {self._printer.get_temperature_type('extruder')}C",
+            f"{self._printer.get_job_name()}",
+            f"Platform: {self._printer.get_temperature_type('platform')} ºC",
+            f"Extruder: {self._printer.get_temperature_type('extruder')} ºC",
             f"Filament: {self._printer.get_filament()}",
         )
 
@@ -66,26 +69,31 @@ class Dremel3D45Timelapse:
         snapshot = requests.get("http://192.168.0.60:10123/?action=snapshot")
         bytes_jpgdata = BytesIO(snapshot.content)
         image = Image.open(bytes_jpgdata)
-        (w, h) = image.size
+        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         if scale != 1.0:
-            image = image.resize((int(w * scale), int(h * scale)))
+            (w, h) = tuple(map(lambda x: int(x * scale), image.size))
+            image = image.resize((w, h))
+        else:
+            (w, h) = image.size
         if original:
             return np.asarray(image)
+        (ow, oh) = overlay.size
+
+        draw = ImageDraw.Draw(overlay)  # Create a context for drawing things on it.
+        font = ImageFont.truetype("dremel3dpy/resources/arial.ttf", size=16)
 
         # Progress Bar
         PROGRESS_BAR_HEIGHT = 5
         origin_x, origin_y = (
             FRAME_RECTANGLE_MARGIN,
-            h - FRAME_RECTANGLE_MARGIN - PROGRESS_BAR_HEIGHT,
+            oh - FRAME_RECTANGLE_MARGIN - PROGRESS_BAR_HEIGHT,
         )
-        rectangle_w = w - origin_x - FRAME_RECTANGLE_MARGIN
+        rectangle_w = ow - origin_x - FRAME_RECTANGLE_MARGIN
         rectangle_h = PROGRESS_BAR_HEIGHT
 
-        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)  # Create a context for drawing things on it.
         draw.rectangle(
             [(origin_x, origin_y), (origin_x + rectangle_w, origin_y + rectangle_h)],
-            fill=(255, 255, 255, 128),
+            fill=(255, 255, 255, 200),
         )
         draw.rectangle(
             [
@@ -98,8 +106,100 @@ class Dremel3D45Timelapse:
                     origin_y + rectangle_h,
                 ),
             ],
-            fill=(0, 127, 0, 128),
+            fill=(64, 224, 208, 200),
         )
+
+        # Sensors Box
+        resource_statuses = self._get_resource_status()
+        text_dimensions = list(
+            map(
+                font.getsize,
+                resource_statuses,
+            )
+        )
+
+        min_rectangle_width = functools.reduce(
+            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
+        )
+        min_rectangle_height = functools.reduce(
+            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
+        )
+        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
+        rectangle_h = (
+            min_rectangle_height
+            + FRAME_RECTANGLE_PADDING * 2
+            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
+        )
+        origin_x, origin_y = (
+            FRAME_RECTANGLE_MARGIN,
+            FRAME_RECTANGLE_MARGIN,
+        )
+
+        draw.rectangle(
+            [(origin_x, origin_y), (origin_x + rectangle_w, origin_y + rectangle_h)],
+            fill=(255, 255, 255, 128),
+        )
+
+        acc_text_height = 0
+        for i, line in enumerate(resource_statuses):
+            text_height = text_dimensions[i][1]
+            draw.text(
+                (
+                    int(origin_x + FRAME_RECTANGLE_PADDING),
+                    int(acc_text_height + origin_y + FRAME_RECTANGLE_PADDING),
+                ),
+                line,
+                font=font,
+                fill=(0, 0, 0, 255),
+            )
+            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
+
+        # Progress Box
+        progress_statuses = self._get_progress_status()
+        text_dimensions = list(
+            map(
+                font.getsize,
+                progress_statuses,
+            )
+        )
+
+        min_rectangle_width = functools.reduce(
+            lambda cur, dimension: max(cur, dimension[0]), text_dimensions, 0
+        )
+        min_rectangle_height = functools.reduce(
+            lambda cur, dimension: cur + dimension[1], text_dimensions, 0
+        )
+        rectangle_w = min_rectangle_width + FRAME_RECTANGLE_PADDING * 2
+        rectangle_h = (
+            min_rectangle_height
+            + FRAME_RECTANGLE_PADDING * 2
+            + (len(text_dimensions) - 1) * FRAME_TEXT_VERTICAL_PADDING
+        )
+        origin_x, origin_y = (
+            FRAME_RECTANGLE_MARGIN,
+            oh - 2 * FRAME_RECTANGLE_MARGIN - PROGRESS_BAR_HEIGHT - rectangle_h,
+        )
+
+        draw.rectangle(
+            [(origin_x, origin_y), (origin_x + rectangle_w, origin_y + rectangle_h)],
+            fill=(255, 255, 255, 128),
+        )
+
+        acc_text_height = 0
+        for i, line in enumerate(progress_statuses):
+            text_height = text_dimensions[i][1]
+            draw.text(
+                (
+                    int(origin_x + FRAME_RECTANGLE_PADDING),
+                    int(acc_text_height + origin_y + FRAME_RECTANGLE_PADDING),
+                ),
+                line,
+                font=font,
+                fill=(0, 0, 0, 255),
+            )
+            acc_text_height += FRAME_TEXT_VERTICAL_PADDING + text_height
+
+        overlay = overlay.resize((w, h))
         image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
         return np.asarray(image)
 
